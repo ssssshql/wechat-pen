@@ -150,6 +150,9 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/login/logout", handleLoginLogout)
 	mux.HandleFunc("/api/login/params", handleLoginParams)
 	mux.HandleFunc("/api/ip", handleOutboundIP)
+	mux.HandleFunc("/api/whitelist/start", handleWhitelistStart)
+	mux.HandleFunc("/api/whitelist/status", handleWhitelistStatus)
+	mux.HandleFunc("/api/whitelist/cancel", handleWhitelistCancel)
 	mux.HandleFunc("/api/healthz", handleHealth)
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/legacy", handleIndex)
@@ -580,6 +583,7 @@ func handleOutboundIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setLastOutboundIP(ip)
 	writeJSON(w, http.StatusOK, map[string]string{"ip": ip})
 }
 

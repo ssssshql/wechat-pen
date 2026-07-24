@@ -68,8 +68,45 @@ function pollLoginStatus() {
 async function cancelLogin() { if (loginTimer) { clearInterval(loginTimer); loginTimer = null }; loginStatus.value = 'idle'; try { await fetch('/api/login/cancel') } catch {} }
 async function logoutLogin() { loginStatus.value = 'idle'; loginQRCode.value = ''; loginCookie.value = ''; loginToken.value = ''; loginFingerprint.value = ''; if (loginTimer) { clearInterval(loginTimer); loginTimer = null }; try { await fetch('/api/login/logout') } catch {}; toast.message('已退出登录') }
 
+// --- Whitelist ---
+const showWhitelist = ref(false)
+const wlStatus = ref('idle') // idle | login | logged_in | scanning_admin | done | error
+const wlFlow = ref('') // login | admin
+const wlQRCode = ref('')
+const wlIP = ref('')
+const wlError = ref('')
+let wlPollTimer: ReturnType<typeof setInterval> | null = null
+
+async function onStartWhitelist() {
+  if (!appID.value.trim()) { toast.error('请先填写 AppID'); return }
+  showWhitelist.value = true
+  wlStatus.value = 'login'; wlFlow.value = ''; wlQRCode.value = ''; wlError.value = ''
+  try {
+    const res = await fetch('/api/whitelist/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appid: appID.value.trim() }) })
+    const d = await res.json()
+    if (!res.ok) throw new Error(d.error || '启动失败')
+    startWhitelistPoll()
+  } catch (e) { wlStatus.value = 'error'; wlError.value = e instanceof Error ? e.message : '启动失败' }
+}
+function startWhitelistPoll() {
+  if (wlPollTimer) clearInterval(wlPollTimer)
+  wlPollTimer = setInterval(async () => {
+    try {
+      const res = await fetch('/api/whitelist/status'); const d = await res.json()
+      wlStatus.value = d.status || 'idle'; wlFlow.value = d.flow || ''; wlQRCode.value = d.qrcode || ''; wlIP.value = d.ip || ''; wlError.value = d.error || ''
+      if (d.status === 'done' || d.status === 'error' || d.status === 'idle') { if (wlPollTimer) { clearInterval(wlPollTimer); wlPollTimer = null }; if (d.status === 'done') toast.success('白名单配置完成') }
+    } catch {}
+  }, 2000)
+}
+async function onCancelWhitelist() {
+  if (wlPollTimer) { clearInterval(wlPollTimer); wlPollTimer = null }
+  try { await fetch('/api/whitelist/cancel', { method: 'POST' }) } catch {}
+  showWhitelist.value = false; wlStatus.value = 'idle'; wlQRCode.value = ''; wlFlow.value = ''
+}
+function closeWhitelist() { if (wlStatus.value === 'done' || wlStatus.value === 'error' || wlStatus.value === 'idle') { showWhitelist.value = false } else { onCancelWhitelist() } }
+
 onMounted(() => { fetchCreds(); fetchOutboundIP(); checkLoginStatus() })
-onBeforeUnmount(() => { if (loginTimer) clearInterval(loginTimer) })
+onBeforeUnmount(() => { if (loginTimer) clearInterval(loginTimer); if (wlPollTimer) clearInterval(wlPollTimer) })
 </script>
 
 <template>
@@ -136,9 +173,68 @@ onBeforeUnmount(() => { if (loginTimer) clearInterval(loginTimer) })
           <Button size="xs" variant="outline" class="w-full text-[11px] h-7 rounded-lg" @click="onSaveCreds">保存凭据</Button>
           <div v-if="outboundIP" class="flex items-center justify-between rounded-md bg-accent/50 px-2.5 py-1.5">
             <span class="text-[10px] text-muted-foreground">出口 IP</span>
-            <button class="text-[11px] font-mono font-medium text-primary hover:underline" @click="copyIP">{{ outboundIP }}</button>
+            <div class="flex items-center gap-1.5">
+              <button class="text-[11px] font-mono font-medium text-primary hover:underline" @click="copyIP">{{ outboundIP }}</button>
+              <Button size="xs" variant="outline" class="h-5 text-[10px] rounded" @click="onStartWhitelist">配置白名单</Button>
+            </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Whitelist dialog -->
+  <div v-if="showWhitelist" class="fixed inset-0 z-[100000] flex items-center justify-center bg-black/40" @click.self="closeWhitelist">
+    <div class="bg-background w-full max-w-sm rounded-lg shadow-xl mx-4">
+      <div class="flex items-center justify-between border-b px-4 py-3">
+        <span class="text-sm font-medium">IP 白名单配置</span>
+        <Button variant="ghost" size="icon-xs" @click="closeWhitelist"><X class="size-3.5" /></Button>
+      </div>
+      <div class="px-4 py-4 space-y-3">
+        <div v-if="wlIP" class="flex items-center justify-between rounded-md bg-accent/50 px-2.5 py-1.5">
+          <span class="text-[10px] text-muted-foreground">将添加 IP</span>
+          <span class="text-[11px] font-mono font-medium">{{ wlIP }}</span>
+        </div>
+
+        <!-- Login flow QR -->
+        <div v-if="wlFlow === 'login' && wlQRCode" class="space-y-2">
+          <p class="text-[11px] text-muted-foreground text-center">请用微信扫码登录开发者平台</p>
+          <div class="flex justify-center rounded-lg border bg-white p-3">
+            <img :src="wlQRCode" class="h-48 w-48" />
+          </div>
+        </div>
+
+        <!-- Admin approval QR -->
+        <div v-if="wlFlow === 'admin' && wlQRCode" class="space-y-2">
+          <p class="text-[11px] text-muted-foreground text-center">请管理员扫码确认修改白名单</p>
+          <div class="flex justify-center rounded-lg border bg-white p-3">
+            <img :src="wlQRCode" class="h-48 w-48" />
+          </div>
+        </div>
+
+        <!-- Processing states -->
+        <div v-if="wlStatus === 'login' && !wlQRCode" class="flex items-center gap-2 py-4 justify-center">
+          <Loader2 class="size-4 animate-spin text-muted-foreground" />
+          <span class="text-[11px] text-muted-foreground">正在打开开发者平台...</span>
+        </div>
+        <div v-if="wlStatus === 'logged_in'" class="flex items-center gap-2 py-4 justify-center">
+          <Loader2 class="size-4 animate-spin text-muted-foreground" />
+          <span class="text-[11px] text-muted-foreground">正在填写白名单...</span>
+        </div>
+
+        <!-- Done -->
+        <div v-if="wlStatus === 'done'" class="rounded-md bg-green-50 px-2.5 py-3 text-center">
+          <p class="text-[11px] text-green-700 font-medium">白名单配置完成</p>
+        </div>
+
+        <!-- Error -->
+        <div v-if="wlStatus === 'error'" class="rounded-md bg-red-50 px-2.5 py-3">
+          <p class="text-[11px] text-red-600">{{ wlError || '配置失败' }}</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 border-t px-4 py-3">
+        <Button v-if="wlStatus !== 'done' && wlStatus !== 'error'" variant="outline" size="sm" @click="onCancelWhitelist">取消</Button>
+        <Button v-else variant="outline" size="sm" @click="closeWhitelist">关闭</Button>
       </div>
     </div>
   </div>
