@@ -295,15 +295,14 @@ var fullMmbizURLRe = regexp.MustCompile(`(?:https?:)?//mmbiz\.qpic\.cn/[^\s"'<>\
 func proxyRewrite(html string) string {
 	return fullMmbizURLRe.ReplaceAllStringFunc(html, func(raw string) string {
 		if strings.HasPrefix(raw, "//") {
-			raw = "https:" + raw
-		}
-		if strings.HasPrefix(raw, "http://") {
-			raw = "https" + raw[4:]
+			raw = "http:" + raw
 		}
 		raw = strings.ReplaceAll(raw, "&amp;", "&")
 		return `/api/biz/image/proxy?url=` + url.QueryEscape(raw)
 	})
 }
+
+func countProxied(html string) int { return strings.Count(html, `/api/biz/image/proxy?url=`) }
 
 func handleImageProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -427,13 +426,15 @@ func handleArticleProxy(w http.ResponseWriter, r *http.Request) {
 
 	html := string(body)
 
-	// Rewrite mmbiz.qpic.cn image URLs to go through our image proxy
-	// Order matters: data-src→src FIRST, then rewrite mmbiz URLs to proxy
+	// Order matters: rewrite data-src→src FIRST, then rewrite mmbiz URLs to proxy
 	html = rewriteDataSrc(html)
 	html = proxyRewrite(html)
 
 	// Remove X-Frame-Options meta tag if present
 	html = strings.ReplaceAll(html, `<meta http-equiv="X-Frame-Options"`, `<meta http-equiv="disabled-X-Frame-Options"`)
+
+	// Debug: show how many images were proxied
+	fmt.Printf("[article-proxy] %s → proxied %d mmbiz URLs\n", rawURL, countProxied(html))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=300")
