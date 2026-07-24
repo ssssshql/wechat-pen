@@ -302,8 +302,10 @@ func proxyRewrite(html string) string {
 		if strings.HasPrefix(raw, "//") {
 			raw = "https:" + raw
 		}
-		// http → https
-		raw = strings.Replace(raw, "http://", "https://", 1)
+		// http → https (mmbiz.qpic.cn supports both, prefer https)
+		if strings.HasPrefix(raw, "http://") {
+			raw = "https" + raw[4:]
+		}
 		raw = strings.ReplaceAll(raw, "&amp;", "&")
 		return attr + `="` + `/api/biz/image/proxy?url=` + url.QueryEscape(raw) + `"`
 	})
@@ -425,16 +427,16 @@ func handleArticleProxy(w http.ResponseWriter, r *http.Request) {
 
 	html := string(body)
 
-	// Inject <base> tag so relative URLs resolve correctly
-	baseTag := `<base href="https://mp.weixin.qq.com/">`
-	html = strings.Replace(html, "<head>", "<head>"+baseTag, 1)
-
-	// Order matters: rewrite data-src→src FIRST, then proxy-rewrite src URLs
+	// Rewrite mmbiz.qpic.cn image URLs to go through our image proxy
+	// Order matters: data-src→src FIRST, then rewrite mmbiz URLs to proxy
 	html = rewriteDataSrc(html)
 	html = proxyRewrite(html)
 
 	// Remove X-Frame-Options meta tag if present
 	html = strings.ReplaceAll(html, `<meta http-equiv="X-Frame-Options"`, `<meta http-equiv="disabled-X-Frame-Options"`)
+
+	// Log for debugging
+	fmt.Printf("[article-proxy] url=%s mmbiz_urls_rewritten=%d\n", rawURL, strings.Count(html, "/api/biz/image/proxy?url="))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=300")
