@@ -273,6 +273,7 @@ var (
 )
 
 // rewriteDataSrc replaces data-src with src when src is empty/missing (WeChat lazy-loading JS won't run in iframe).
+// Must run BEFORE proxyRewrite so the rewrite regex sees src=, not data-src=.
 func rewriteDataSrc(html string) string {
 	return imgTagRe.ReplaceAllStringFunc(html, func(tag string) string {
 		srcMatch := srcRe.FindStringSubmatch(tag)
@@ -285,6 +286,26 @@ func rewriteDataSrc(html string) string {
 			return srcRe.ReplaceAllString(tag, ` src="`+dataSrcMatch[1]+`"`)
 		}
 		return tag
+	})
+}
+
+// proxyRewrite rewrites mmbiz.qpic.cn image URLs to go through /api/biz/image/proxy.
+func proxyRewrite(html string) string {
+	return mmbizURLRe.ReplaceAllStringFunc(html, func(match string) string {
+		parts := mmbizURLRe.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		attr := parts[1]
+		raw := parts[2]
+		// Protocol-relative → https
+		if strings.HasPrefix(raw, "//") {
+			raw = "https:" + raw
+		}
+		// http → https
+		raw = strings.Replace(raw, "http://", "https://", 1)
+		raw = strings.ReplaceAll(raw, "&amp;", "&")
+		return attr + `="` + `/api/biz/image/proxy?url=` + url.QueryEscape(raw) + `"`
 	})
 }
 
@@ -303,7 +324,9 @@ func handleImageProxy(w http.ResponseWriter, r *http.Request) {
 	// Only allow known WeChat / QQ image domains
 	allowedPrefixes := []string{
 		"https://mmbiz.qpic.cn/",
+		"http://mmbiz.qpic.cn/",
 		"https://thirdwx.qlogo.cn/",
+		"http://thirdwx.qlogo.cn/",
 		"https://wx.qlogo.cn/",
 	}
 	allowed := false
@@ -382,7 +405,7 @@ func handleArticleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UD1A.231105.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 
@@ -406,28 +429,12 @@ func handleArticleProxy(w http.ResponseWriter, r *http.Request) {
 	baseTag := `<base href="https://mp.weixin.qq.com/">`
 	html = strings.Replace(html, "<head>", "<head>"+baseTag, 1)
 
-	// Rewrite mmbiz.qpic.cn image URLs to go through our image proxy
-	// WeChat uses both `https://mmbiz.qpic.cn/` and `//mmbiz.qpic.cn/` forms
-	html = mmbizURLRe.ReplaceAllStringFunc(html, func(match string) string {
-		parts := mmbizURLRe.FindStringSubmatch(match)
-		if len(parts) < 3 {
-			return match
-		}
-		attr := parts[1]
-		rawImgURL := parts[2]
-		// Protocol-relative → https
-		if strings.HasPrefix(rawImgURL, "//") {
-			rawImgURL = "https:" + rawImgURL
-		}
-		rawImgURL = strings.ReplaceAll(rawImgURL, "&amp;", "&")
-		return attr + `="` + `/api/biz/image/proxy?url=` + url.QueryEscape(rawImgURL) + `"`
-	})
+	// Order matters: rewrite data-src→src FIRST, then proxy-rewrite src URLs
+	html = rewriteDataSrc(html)
+	html = proxyRewrite(html)
 
 	// Remove X-Frame-Options meta tag if present
 	html = strings.ReplaceAll(html, `<meta http-equiv="X-Frame-Options"`, `<meta http-equiv="disabled-X-Frame-Options"`)
-
-	// Copy data-src to src (WeChat lazy-loading JS won't run in iframe)
-	html = rewriteDataSrc(html)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=300")
