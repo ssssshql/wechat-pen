@@ -327,13 +327,11 @@ func detectPageState(page *rod.Page) string {
 		}
 		return 'unknown';
 	})()`
-	var res string
 	result, err := page.Eval(js)
 	if err != nil {
 		return "unknown"
 	}
-	_ = result.Call(&res)
-	return res
+	return result.Value.Str()
 }
 
 func extractQRCodeFromPage(page *rod.Page) string {
@@ -380,7 +378,7 @@ func clickEditButton(page *rod.Page) {
 	var ok bool
 	result, err := page.Eval(js)
 	if err == nil {
-		_ = result.Call(&ok)
+		ok = result.Value.Bool()
 	}
 	if !ok {
 		// Fallback: try xpath
