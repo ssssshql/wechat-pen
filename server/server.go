@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -149,10 +150,14 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/login/cancel", handleLoginCancel)
 	mux.HandleFunc("/api/login/logout", handleLoginLogout)
 	mux.HandleFunc("/api/login/params", handleLoginParams)
+	mux.HandleFunc("/api/login/events", handleLoginEvents)
+	mux.HandleFunc("/api/account/info", handleAccountInfo)
 	mux.HandleFunc("/api/ip", handleOutboundIP)
+	mux.HandleFunc("/api/check_ip", handleCheckIP)
 	mux.HandleFunc("/api/whitelist/start", handleWhitelistStart)
 	mux.HandleFunc("/api/whitelist/status", handleWhitelistStatus)
 	mux.HandleFunc("/api/whitelist/cancel", handleWhitelistCancel)
+	mux.HandleFunc("/api/whitelist/events", handleWhitelistEvents)
 	mux.HandleFunc("/api/healthz", handleHealth)
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/legacy", handleIndex)
@@ -549,42 +554,120 @@ func withLog(next http.Handler) http.Handler {
 }
 
 func handleOutboundIP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		services := []string{
+			"https://api4.ipify.org",
+			"https://ipv4.icanhazip.com",
+			"https://ipv4.ifconfig.me",
+		}
+		var ip string
+		for _, svc := range services {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			req, _ := http.NewRequestWithContext(ctx, "GET", svc, nil)
+			resp, err := http.DefaultClient.Do(req)
+			cancel()
+			if err != nil {
+				continue
+			}
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+			resp.Body.Close()
+			ip = strings.TrimSpace(string(body))
+			if ip != "" && resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if ip == "" {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "无法获取出口 IP，请检查网络连接"})
+			return
+		}
+		setLastOutboundIP(ip)
+		writeJSON(w, http.StatusOK, map[string]string{"ip": ip})
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		defer r.Body.Close()
+		var req struct {
+			IP string `json:"ip"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.IP) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ip is required"})
+			return
+		}
+		setLastOutboundIP(req.IP)
+		writeJSON(w, http.StatusOK, map[string]string{"ip": req.IP})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleCheckIP calls WeChat stable_token to check if the current IP is whitelisted.
+// Returns {ok:true} if token succeeds, or {ok:false, real_ip:"x.x.x.x", error:"..."} if 40164.
+func handleCheckIP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Try multiple IPv4-only services
-	services := []string{
-		"https://api4.ipify.org",
-		"https://ipv4.icanhazip.com",
-		"https://ipv4.ifconfig.me",
-	}
+	currentCredsMu.RLock()
+	appid := currentCreds.AppID
+	secret := currentCreds.Secret
+	currentCredsMu.RUnlock()
 
-	var ip string
-	for _, svc := range services {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		req, _ := http.NewRequestWithContext(ctx, "GET", svc, nil)
-		resp, err := http.DefaultClient.Do(req)
-		cancel()
-		if err != nil {
-			continue
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		resp.Body.Close()
-		ip = strings.TrimSpace(string(body))
-		if ip != "" && resp.StatusCode == http.StatusOK {
-			break
-		}
-	}
-
-	if ip == "" {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "无法获取出口 IP，请检查网络连接"})
+	if appid == "" || secret == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请先配置 AppID 和 AppSecret"})
 		return
 	}
 
-	setLastOutboundIP(ip)
-	writeJSON(w, http.StatusOK, map[string]string{"ip": ip})
+	body, _ := json.Marshal(map[string]string{
+		"grant_type": "client_credential",
+		"appid":      appid,
+		"secret":     secret,
+	})
+	resp, err := http.Post(wechatTokenURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "请求失败: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+
+	var tokResp struct {
+		AccessToken string `json:"access_token"`
+		ErrCode     int    `json:"errcode"`
+		ErrMsg      string `json:"errmsg"`
+	}
+	if err := json.Unmarshal(b, &tokResp); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "解析响应失败"})
+		return
+	}
+
+	if tokResp.ErrCode == 40164 {
+		realIP := ""
+		if idx := strings.Index(tokResp.ErrMsg, "invalid ip "); idx >= 0 {
+			s := tokResp.ErrMsg[idx+len("invalid ip "):]
+			if sp := strings.Index(s, " "); sp > 0 {
+				realIP = s[:sp]
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      false,
+			"code":    40164,
+			"real_ip": realIP,
+			"error":   tokResp.ErrMsg,
+		})
+		return
+	}
+
+	if tokResp.ErrCode != 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"code":  tokResp.ErrCode,
+			"error": tokResp.ErrMsg,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 var _ = fs.ErrNotExist

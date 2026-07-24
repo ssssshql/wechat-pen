@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
-import { Image, Copy, Loader2, RefreshCw, ChevronLeft, ChevronRight, X, Trash2, ImageUp, Search, ArrowLeft, FileText, Rss } from '@lucide/vue'
+import { Image, Copy, Loader2, RefreshCw, ChevronLeft, ChevronRight, X, Trash2, ImageUp, Search, ArrowLeft, Rss } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fetchMaterials, deleteMaterial, searchBiz, fetchBizArticles, type BizItem, type PublishedArticle } from '@/lib/api'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, History, Loader2, Menu, Plus, Rss, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, History, Loader2, Menu, Plus, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
@@ -39,6 +39,22 @@ const editorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
 const mobileSettings = ref(false)
 const showMaterials = ref(false)
 const showMp = ref(false)
+const mpConnected = ref(false)
+const mpName = ref('')
+const mpAvatar = ref('')
+
+async function checkMpStatus() {
+  try {
+    const res = await fetch('/api/login/status')
+    const d = await res.json()
+    mpConnected.value = d.status === 'ok'
+    if (d.status === 'ok') {
+      const r2 = await fetch('/api/account/info')
+      const d2 = await r2.json()
+      if (d2.ok) { mpName.value = d2.name || ''; mpAvatar.value = d2.headimg_url || '' }
+    }
+  } catch {}
+}
 const showDraftDialog = ref(false)
 const draftAuthor = ref('')
 const draftDigest = ref('')
@@ -205,7 +221,7 @@ function onKeydown(e: KeyboardEvent) { const mod = e.metaKey || e.ctrlKey; if (!
 
 watch([markdown, theme, style, title, primaryColor, textIndent, justify, highlight, highlightTheme, toc, footer, imageCaption, paragraphGap, fontSizePx, lineHeight], () => schedule())
 
-onMounted(() => { const settings = loadSettings(currentSettings()); applySettings(settings as Record<string, unknown>); drafts.value = loadDrafts(); const aid = getActiveDraftId(); if (aid && drafts.value.some((d) => d.id === aid)) selectDraft(aid); else if (drafts.value[0]) selectDraft(drafts.value[0].id); else runConvert(); window.addEventListener('keydown', onKeydown) })
+onMounted(() => { const settings = loadSettings(currentSettings()); applySettings(settings as Record<string, unknown>); drafts.value = loadDrafts(); const aid = getActiveDraftId(); if (aid && drafts.value.some((d) => d.id === aid)) selectDraft(aid); else if (drafts.value[0]) selectDraft(drafts.value[0].id); else runConvert(); window.addEventListener('keydown', onKeydown); checkMpStatus() })
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
 </script>
 
@@ -231,7 +247,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
           <input ref="batchInput" type="file" accept=".md,.markdown,.txt" multiple class="hidden" @change="onBatchFiles" />
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="batchInput?.click()"><Download class="size-3.5 mr-1" />批量</Button>
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showMaterials = !showMaterials"><Image class="size-3.5 mr-1" />素材</Button>
-          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showMp = !showMp"><Rss class="size-3.5 mr-1" />公众号</Button>
+          <Button variant="ghost" size="xs" class="hidden sm:inline-flex gap-1.5" @click="showMp = !showMp" title="连接微信">
+            <img v-if="mpConnected && mpAvatar" :src="mpAvatar" class="size-4 rounded-full object-cover" />
+            <svg v-else viewBox="0 0 24 24" class="size-4" :fill="'#07c160'"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.11.24-.245 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-7.062-6.122zm-2.18 2.769c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982z" /></svg>
+            <span v-if="mpConnected && mpName" class="text-[11px]">{{ mpName }}</span>
+            <span v-else class="text-[11px]">连接微信</span>
+          </Button>
           <span class="mx-1.5 hidden w-px self-stretch bg-border sm:inline" />
           <Button variant="ghost" size="xs" @click="downloadHTML"><Download class="size-3.5 mr-1" />下载</Button>
           <Button size="xs" @click="copyHTML"><Copy class="size-3.5 mr-1" />复制</Button>
@@ -281,7 +302,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
     <div v-if="mobileSettings" class="fixed inset-0 z-40 bg-black/40 lg:hidden" @click.self="mobileSettings = false">
       <div class="bg-background absolute inset-y-0 left-0 flex w-[min(100%,300px)] flex-col shadow-xl">
         <div class="flex h-10 items-center justify-between border-b px-3"><div class="flex items-center gap-1.5 text-sm font-medium"><Settings2 class="size-4" />设置</div><Button size="icon-xs" variant="ghost" @click="mobileSettings = false"><X class="size-3.5" /></Button></div>
-        <div class="scroll-panel flex-1"><SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:title="title" v-model:text-indent="textIndent" v-model:justify="justify" v-model:paragraph-gap="paragraphGap" v-model:font-size-px="fontSizePx" v-model:line-height="lineHeight" v-model:highlight="highlight" v-model:highlight-theme="highlightTheme" v-model:toc="toc" v-model:footer="footer" v-model:image-caption="imageCaption" v-model:app-id="appID" v-model:app-secret="appSecret" @style-change="onStyleChange" @insert="insertSnippet" /></div>
+        <div class="scroll-panel flex-1"><SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:title="title" v-model:text-indent="textIndent" v-model:justify="justify" v-model:paragraph-gap="paragraphGap" v-model:font-size-px="fontSizePx" v-model:line-height="lineHeight" v-model:highlight="highlight" v-model:highlight-theme="highlightTheme" v-model:toc="toc" v-model:footer="footer" v-model:image-caption="imageCaption" @style-change="onStyleChange" @insert="insertSnippet" /></div>
       </div>
     </div>
 
@@ -404,7 +425,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
 
     <!-- MP browser (Teleport) -->
     <Teleport to="body">
-      <MpBrowser v-if="showMp" @close="showMp = false" />
+      <MpBrowser v-if="showMp" :open="showMp" @close="showMp = false" @login="checkMpStatus" />
     </Teleport>
 
     <footer class="app-footer flex h-7 shrink-0 items-center gap-2 px-3 text-[11px]">

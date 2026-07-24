@@ -2,8 +2,8 @@ package server
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +26,80 @@ type browserSession struct {
 	err       string
 	cancel    chan struct{}
 	authParams map[string]string // captured token, fingerprint, etc.
+	qrB64     string            // current QR base64 data URI
+	qrStatus  int               // 0=waiting, 3=expired, 4=scanned
+	message   string            // granular progress text
+
+	// SSE event broadcasting
+	subscribers []chan string // each SSE client gets its own channel
+}
+
+func (bs *browserSession) broadcastState() {
+	bs.mu.Lock()
+	status := "waiting"
+	if bs.loggedIn {
+		status = "ok"
+	} else if bs.err != "" {
+		status = "error"
+	}
+	data := map[string]any{
+		"status":     status,
+		"qr_status":  bs.qrStatus,
+		"message":    bs.message,
+	}
+	if bs.loggedIn {
+		data["cookies"] = bs.cookies
+		if bs.authParams != nil {
+			if t, ok := bs.authParams["token"]; ok {
+				data["token"] = t
+			}
+			if fp, ok := bs.authParams["fingerprint"]; ok {
+				data["fingerprint"] = fp
+			}
+		}
+	}
+	if bs.err != "" {
+		data["error"] = bs.err
+	}
+	bs.mu.Unlock()
+
+	b, _ := json.Marshal(data)
+	bs.broadcast("event: state\ndata: " + string(b) + "\n\n")
+}
+
+func (bs *browserSession) addSubscriber() chan string {
+	ch := make(chan string, 8)
+	bs.mu.Lock()
+	bs.subscribers = append(bs.subscribers, ch)
+	bs.mu.Unlock()
+	return ch
+}
+
+func (bs *browserSession) removeSubscriber(ch chan string) {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	for i, s := range bs.subscribers {
+		if s == ch {
+			bs.subscribers = append(bs.subscribers[:i], bs.subscribers[i+1:]...)
+			break
+		}
+	}
+	close(ch)
+}
+
+func (bs *browserSession) broadcast(event string) {
+	bs.mu.Lock()
+	subs := make([]chan string, len(bs.subscribers))
+	copy(subs, bs.subscribers)
+	bs.mu.Unlock()
+
+	for _, ch := range subs {
+		select {
+		case ch <- event:
+		default:
+			// drop if subscriber is slow (buffer full)
+		}
+	}
 }
 
 var loginSession = struct {
@@ -147,10 +221,11 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 	var qrcodeB64 string
 
 	// The QR code is typically an img with class or inside a specific div
-	// Try multiple selectors
+	// Try multiple selectors — exact class match first, then broader fallbacks
 	selectors := []string{
-		"img[src*='qrcode']",
+		"img.login__type__container__scan__qrcode",
 		"img[src*='showqrcode']",
+		"img[src*='qrcode']",
 		".qrcode img",
 		"#qrcode img",
 		".login_qrcode img",
@@ -165,6 +240,7 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 		el, err := page.Element(sel)
 		if err == nil && el != nil {
 			qrEl = el
+			fmt.Printf("login: QR element found with selector %q\n", sel)
 			break
 		}
 	}
@@ -178,18 +254,41 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 			} else if strings.HasPrefix(srcURL, "/") {
 				srcURL = "https://mp.weixin.qq.com" + srcURL
 			}
-			resp, err := http.Get(srcURL)
-			if err == nil && resp.StatusCode == 200 {
-				data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<19))
-				resp.Body.Close()
-				if len(data) > 1000 {
-					qrcodeB64 = "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+			// Extract the QR image via canvas (already loaded in the <img> element)
+			fmt.Printf("login: extracting QR via canvas\n")
+			js := `function() {
+				try {
+					var img = document.querySelector('img.login__type__container__scan__qrcode');
+					if (!img) return 'err:no img';
+					if (!img.naturalWidth) return 'err:img not loaded';
+					var c = document.createElement('canvas');
+					c.width = img.naturalWidth;
+					c.height = img.naturalHeight;
+					c.getContext('2d').drawImage(img, 0, 0);
+					var d = c.toDataURL('image/png');
+					var idx = d.indexOf(',');
+					return idx > 0 ? d.substring(idx + 1) : 'err:no data';
+				} catch(e) { return 'err:' + e.message; }
+			}`
+			result, err := page.Evaluate(rod.Eval(js))
+			if err == nil && result != nil {
+				val := result.Value.Str()
+				fmt.Printf("login: browser fetch result: %s (len=%d)\n", val[:min(len(val), 50)], len(val))
+				if !strings.HasPrefix(val, "err:") && len(val) > 200 {
+					qrcodeB64 = "data:image/png;base64," + val
+					fmt.Printf("login: browser fetch ok\n")
+				} else {
+					fmt.Printf("login: browser fetch failed: %s\n", val)
 				}
+			} else {
+				fmt.Printf("login: browser fetch error: %v\n", err)
 			}
 		}
 		if qrcodeB64 == "" {
+			fmt.Println("login: falling back to element screenshot")
 			screenshot, err := qrEl.Screenshot(proto.PageCaptureScreenshotFormatPng, 100)
 			if err == nil && len(screenshot) > 0 {
+				fmt.Printf("login: screenshot %d bytes\n", len(screenshot))
 				qrcodeB64 = "data:image/png;base64," + base64.StdEncoding.EncodeToString(screenshot)
 			}
 		}
@@ -197,6 +296,7 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 
 	if qrcodeB64 == "" {
 		// Fallback: screenshot the whole page
+		fmt.Println("login: falling back to full page screenshot")
 		screenshot, err := page.Screenshot(true, &proto.PageCaptureScreenshot{
 			Format: proto.PageCaptureScreenshotFormatPng,
 			Quality: func() *int { v := 80; return &v }(),
@@ -217,11 +317,49 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 		browser: browser,
 		page:    page,
 		cancel:  make(chan struct{}),
+		qrB64:   qrcodeB64,
+		message: "二维码已获取，等待扫码",
 	}
 
 	// Enable CDP Network early — BEFORE login — so we capture the first post-login API calls
 	// that contain token+fingerprint in URL. Network.enable is a passive observer.
 	_ = proto.NetworkEnable{}.Call(bs.page)
+
+	// Listen for scanloginqrcode?action=ask responses to track QR status
+	go bs.page.EachEvent(func(e *proto.NetworkResponseReceived) {
+		if !strings.Contains(e.Response.URL, "scanloginqrcode") || !strings.Contains(e.Response.URL, "action=ask") {
+			return
+		}
+		body, err := proto.NetworkGetResponseBody{RequestID: e.RequestID}.Call(bs.page)
+		if err != nil {
+			return
+		}
+		var resp struct {
+			Status int `json:"status"`
+		}
+		if json.Unmarshal([]byte(body.Body), &resp) != nil {
+			return
+		}
+		fmt.Printf("login: QR scan status: %d\n", resp.Status)
+
+		bs.mu.Lock()
+		bs.qrStatus = resp.Status
+		switch resp.Status {
+		case 0:
+			bs.message = "等待扫码"
+		case 3:
+			bs.message = "二维码已失效，正在刷新..."
+		case 4:
+			bs.message = "已扫码，请在手机上确认授权"
+		}
+		bs.mu.Unlock()
+		bs.broadcastState()
+
+		// If expired (3), click refresh and re-extract QR
+		if resp.Status == 3 {
+			go refreshLoginQR(bs)
+		}
+	})()
 
 	// Start listening for network events — capture token+fingerprint from URL params
 	go bs.page.EachEvent(func(e *proto.NetworkRequestWillBeSent) {
@@ -289,6 +427,8 @@ func pollLogin(bs *browserSession, initialURL string) {
 				bs.mu.Lock()
 				bs.err = "页面异常"
 				bs.mu.Unlock()
+				errJSON, _ := json.Marshal(map[string]string{"error": "页面异常"})
+				bs.broadcast("event: login_error\ndata: " + string(errJSON) + "\n\n")
 				return
 			}
 
@@ -317,6 +457,10 @@ func pollLogin(bs *browserSession, initialURL string) {
 						bs.mu.Lock()
 						bs.cookies = cookieStr
 						bs.mu.Unlock()
+
+						// Broadcast status ok
+						statusJSON, _ := json.Marshal(map[string]string{"status": "ok"})
+						bs.broadcast("event: status\ndata: " + string(statusJSON) + "\n\n")
 
 						// Extract token/fingerprint from the page URL after navigation.
 						// No JS injection, no CDP Network domain — zero detection surface.
@@ -419,6 +563,10 @@ func cancelLoginSession() {
 	loginSession.mu.Unlock()
 
 	if bs != nil {
+		// Broadcast cancel before closing
+		cancelJSON, _ := json.Marshal(map[string]string{"status": "cancelled"})
+		bs.broadcast("event: cancel\ndata: " + string(cancelJSON) + "\n\n")
+
 		close(bs.cancel)
 		_ = bs.page.Close()
 		_ = bs.browser.Close()
@@ -479,6 +627,73 @@ func extractAuthParams(bs *browserSession) {
 	saveConfigFile(cfg)
 
 	fmt.Printf("login: captured token=%s fingerprint=%s (persisted)\n", token, fp)
+
+	// Broadcast credentials to SSE subscribers
+	bs.mu.Lock()
+	cookieStr := bs.cookies
+	bs.mu.Unlock()
+	credsJSON, _ := json.Marshal(map[string]string{
+		"cookies":     cookieStr,
+		"token":       token,
+		"fingerprint": fp,
+	})
+	bs.broadcast("event: credentials\ndata: " + string(credsJSON) + "\n\n")
+}
+
+// refreshLoginQR clicks the refresh link on mp.weixin.qq.com login page and re-extracts QR.
+func refreshLoginQR(bs *browserSession) {
+	fmt.Println("login: clicking refresh button...")
+	clickResult, _ := bs.page.Evaluate(rod.Eval(`function() {
+		var links = document.querySelectorAll('a, span');
+		for (var i = 0; i < links.length; i++) {
+			var t = links[i].textContent.trim();
+			if (t === '刷新' || t === '点击刷新' || t === 'Refresh') {
+				links[i].click();
+				return 'clicked: ' + t;
+			}
+		}
+		return 'not found';
+	}`))
+	if clickResult != nil {
+		fmt.Printf("login: refresh click: %s\n", clickResult.Value.Str())
+	}
+	time.Sleep(2 * time.Second)
+
+	// Re-extract QR via canvas
+	js := `function() {
+		try {
+			var img = document.querySelector('img.login__type__container__scan__qrcode');
+			if (!img) return 'err:no img';
+			if (!img.naturalWidth) return 'err:img not loaded';
+			var c = document.createElement('canvas');
+			c.width = img.naturalWidth;
+			c.height = img.naturalHeight;
+			c.getContext('2d').drawImage(img, 0, 0);
+			var d = c.toDataURL('image/png');
+			var idx = d.indexOf(',');
+			return idx > 0 ? d.substring(idx + 1) : 'err:no data';
+		} catch(e) { return 'err:' + e.message; }
+	}`
+	result, err := bs.page.Evaluate(rod.Eval(js))
+	if err == nil && result != nil {
+		val := result.Value.Str()
+		if !strings.HasPrefix(val, "err:") && len(val) > 200 {
+			newQR := "data:image/png;base64," + val
+			bs.mu.Lock()
+			bs.qrB64 = newQR
+			bs.qrStatus = 0
+			bs.message = "二维码已刷新，等待扫码"
+			// Broadcast new QR via a special event
+			qrJSON, _ := json.Marshal(map[string]any{
+				"qrcode":    newQR,
+				"qr_status": 0,
+				"message":   "二维码已刷新，等待扫码",
+			})
+			bs.mu.Unlock()
+			bs.broadcast("event: qrcode\ndata: " + string(qrJSON) + "\n\n")
+			fmt.Println("login: QR refreshed ok")
+		}
+	}
 }
 
 // PublishDraftWithCookie publishes a draft using the stored login cookie.
@@ -542,4 +757,100 @@ func handleLoginParams(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func handleLoginEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Remove write deadline for this long-lived SSE connection
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Time{})
+
+	// SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	loginSession.mu.Lock()
+	bs := loginSession.bs
+	loginSession.mu.Unlock()
+
+	// No active session — send stored credentials if available, then wait
+	if bs == nil {
+		if cookie := GetLoginCookie(); cookie != "" {
+			currentCredsMu.RLock()
+			data := map[string]any{"cookies": cookie}
+			if currentCreds.Token != "" {
+				data["token"] = currentCreds.Token
+			}
+			if currentCreds.Fingerprint != "" {
+				data["fingerprint"] = currentCreds.Fingerprint
+			}
+			currentCredsMu.RUnlock()
+			jsonBytes, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: credentials\ndata: %s\n\n", jsonBytes)
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+		return
+	}
+
+	// Subscribe to active session events
+	ch := bs.addSubscriber()
+	defer bs.removeSubscriber(ch)
+
+	// Send initial state snapshot
+	bs.mu.Lock()
+	switch {
+	case bs.loggedIn:
+		data := map[string]any{"status": "ok", "cookies": bs.cookies}
+		if bs.authParams != nil {
+			if t, ok := bs.authParams["token"]; ok {
+				data["token"] = t
+			}
+			if fp, ok := bs.authParams["fingerprint"]; ok {
+				data["fingerprint"] = fp
+			}
+		}
+		jsonBytes, _ := json.Marshal(data)
+		fmt.Fprintf(w, "event: credentials\ndata: %s\n\n", jsonBytes)
+	case bs.err != "":
+		jsonBytes, _ := json.Marshal(map[string]string{"error": bs.err})
+		fmt.Fprintf(w, "event: login_error\ndata: %s\n\n", jsonBytes)
+	default:
+		data := map[string]any{"status": "waiting", "qr_status": bs.qrStatus, "message": bs.message}
+		if bs.qrB64 != "" {
+			data["qrcode"] = bs.qrB64
+		}
+		jsonBytes, _ := json.Marshal(data)
+		fmt.Fprintf(w, "event: state\ndata: %s\n\n", jsonBytes)
+	}
+	bs.mu.Unlock()
+	flusher.Flush()
+
+	// Stream events until disconnect or session ends
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-bs.cancel:
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprint(w, event)
+			flusher.Flush()
+		}
+	}
 }
