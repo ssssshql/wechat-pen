@@ -290,7 +290,7 @@ func rewriteDataSrc(html string) string {
 
 // proxyRewrite rewrites ALL mmbiz.qpic.cn URLs to go through /api/biz/image/proxy.
 // Handles src="...", data-src="...", url(...), and bare URLs.
-var fullMmbizURLRe = regexp.MustCompile(`(?:https?:)?//mmbiz\.qpic\.cn/[^\s"'<>\)]+`)
+var fullMmbizURLRe = regexp.MustCompile(`(?:https?:)?//mm[a-z]+\.qpic\.cn/[^\s"'<>\)]+`)
 
 func proxyRewrite(html string) string {
 	return fullMmbizURLRe.ReplaceAllStringFunc(html, func(raw string) string {
@@ -303,6 +303,30 @@ func proxyRewrite(html string) string {
 }
 
 func countProxied(html string) int { return strings.Count(html, `/api/biz/image/proxy?url=`) }
+
+// allowedImageHosts is a set of hostnames allowed by the image proxy.
+var allowedImageHosts = map[string]bool{
+	"mmbiz.qpic.cn":     true,
+	"mmecoa.qpic.cn":    true,
+	"thirdwx.qlogo.cn": true,
+	"wx.qlogo.cn":       true,
+}
+
+func isAllowedImageHost(rawURL string) bool {
+	idx := strings.Index(rawURL, "://")
+	if idx < 0 {
+		return false
+	}
+	rest := rawURL[idx+3:]
+	if slash := strings.Index(rest, "/"); slash >= 0 {
+		rest = rest[:slash]
+	}
+	// Allow any *.qpic.cn host
+	if strings.HasSuffix(rest, ".qpic.cn") {
+		return true
+	}
+	return allowedImageHosts[rest]
+}
 
 func handleImageProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -324,20 +348,8 @@ func handleImageProxy(w http.ResponseWriter, r *http.Request) {
 		rawURL = "https:" + rawURL
 	}
 
-	// Only allow known WeChat / QQ image domains
-	allowedPrefixes := []string{
-		"https://mmbiz.qpic.cn/",
-		"https://thirdwx.qlogo.cn/",
-		"https://wx.qlogo.cn/",
-	}
-	allowed := false
-	for _, p := range allowedPrefixes {
-		if strings.HasPrefix(rawURL, p) {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
+	// Only allow known WeChat / QQ image CDN domains
+	if !isAllowedImageHost(rawURL) {
 		http.Error(w, "domain not allowed", http.StatusBadRequest)
 		return
 	}
