@@ -265,6 +265,29 @@ func mpGet(endpoint string, params map[string]string) ([]byte, error) {
 
 // --- Image Proxy (hotlink bypass) ---
 
+var (
+	imgTagRe   = regexp.MustCompile(`(?i)<img\b[^>]*>`)
+	dataSrcRe  = regexp.MustCompile(`data-src="([^"]*)"`)
+	srcRe      = regexp.MustCompile(`\ssrc="([^"]*)"`)
+	mmbizURLRe = regexp.MustCompile(`(src|data-src)="((?:https?:)?//mmbiz\.qpic\.cn/[^"]*)"`)
+)
+
+// rewriteDataSrc replaces data-src with src when src is empty/missing (WeChat lazy-loading JS won't run in iframe).
+func rewriteDataSrc(html string) string {
+	return imgTagRe.ReplaceAllStringFunc(html, func(tag string) string {
+		srcMatch := srcRe.FindStringSubmatch(tag)
+		dataSrcMatch := dataSrcRe.FindStringSubmatch(tag)
+		hasSrc := srcMatch != nil && srcMatch[1] != "" && !strings.Contains(srcMatch[1], "data:image")
+		if !hasSrc && dataSrcMatch != nil && dataSrcMatch[1] != "" {
+			if srcMatch == nil {
+				return strings.Replace(tag, "data-src=", "src=", 1)
+			}
+			return srcRe.ReplaceAllString(tag, ` src="`+dataSrcMatch[1]+`"`)
+		}
+		return tag
+	})
+}
+
 func handleImageProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -384,20 +407,27 @@ func handleArticleProxy(w http.ResponseWriter, r *http.Request) {
 	html = strings.Replace(html, "<head>", "<head>"+baseTag, 1)
 
 	// Rewrite mmbiz.qpic.cn image URLs to go through our image proxy
-	// so they bypass hotlink protection and work inside the iframe
-	imgURLRe := regexp.MustCompile(`(src|data-src)="(https://mmbiz\.qpic\.cn/[^"]*)"`)
-	html = imgURLRe.ReplaceAllStringFunc(html, func(match string) string {
-		parts := imgURLRe.FindStringSubmatch(match)
+	// WeChat uses both `https://mmbiz.qpic.cn/` and `//mmbiz.qpic.cn/` forms
+	html = mmbizURLRe.ReplaceAllStringFunc(html, func(match string) string {
+		parts := mmbizURLRe.FindStringSubmatch(match)
 		if len(parts) < 3 {
 			return match
 		}
 		attr := parts[1]
-		imgURL := parts[2]
-		return attr + `="` + `/api/biz/image/proxy?url=` + url.QueryEscape(imgURL) + `"`
+		rawImgURL := parts[2]
+		// Protocol-relative → https
+		if strings.HasPrefix(rawImgURL, "//") {
+			rawImgURL = "https:" + rawImgURL
+		}
+		rawImgURL = strings.ReplaceAll(rawImgURL, "&amp;", "&")
+		return attr + `="` + `/api/biz/image/proxy?url=` + url.QueryEscape(rawImgURL) + `"`
 	})
 
-	// Remove X-Frame-Options meta tag if present (some articles embed it)
+	// Remove X-Frame-Options meta tag if present
 	html = strings.ReplaceAll(html, `<meta http-equiv="X-Frame-Options"`, `<meta http-equiv="disabled-X-Frame-Options"`)
+
+	// Copy data-src to src (WeChat lazy-loading JS won't run in iframe)
+	html = rewriteDataSrc(html)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=300")
