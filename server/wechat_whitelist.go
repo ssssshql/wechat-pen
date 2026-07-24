@@ -328,9 +328,11 @@ func detectPageState(page *rod.Page) string {
 		return 'unknown';
 	})()`
 	var res string
-	if err := page.Eval(js).Call(&res); err != nil {
+	result, err := page.Eval(js)
+	if err != nil {
 		return "unknown"
 	}
+	_ = result.Call(&res)
 	return res
 }
 
@@ -376,7 +378,11 @@ func clickEditButton(page *rod.Page) {
 		return false;
 	})()`
 	var ok bool
-	if err := page.Eval(js).Call(&ok); err != nil || !ok {
+	result, err := page.Eval(js)
+	if err == nil {
+		_ = result.Call(&ok)
+	}
+	if !ok {
 		// Fallback: try xpath
 		el, err := page.Timeout(5 * time.Second).Element(`xpath/.//p[contains(.,'白名单')]/..//a`)
 		if err == nil {
