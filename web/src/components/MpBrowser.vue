@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { toast } from 'vue-sonner'
-import { X, Loader2, Rss, ExternalLink, Search, ArrowLeft } from '@lucide/vue'
+import { X, Loader2, Rss } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { searchBiz, fetchBizArticles, type BizItem, type PublishedArticle } from '@/lib/api'
-
-function proxyImg(url: string) { return url ? `/api/biz/image/proxy?url=${encodeURIComponent(url)}` : '' }
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -71,32 +68,6 @@ function pollLoginStatus() {
 async function cancelLogin() { if (loginTimer) { clearInterval(loginTimer); loginTimer = null }; loginStatus.value = 'idle'; try { await fetch('/api/login/cancel') } catch {} }
 async function logoutLogin() { loginStatus.value = 'idle'; loginQRCode.value = ''; loginCookie.value = ''; loginToken.value = ''; loginFingerprint.value = ''; if (loginTimer) { clearInterval(loginTimer); loginTimer = null }; try { await fetch('/api/login/logout') } catch {}; toast.message('已退出登录') }
 
-// --- Biz Search ---
-const bizQuery = ref('')
-const bizResults = ref<BizItem[]>([])
-const bizSearching = ref(false)
-const selectedBiz = ref<BizItem | null>(null)
-const bizArticles = ref<PublishedArticle[]>([])
-const bizArticlesLoading = ref(false)
-const bizArticlesTotal = ref(0)
-const viewerUrl = ref('')
-const viewerTitle = ref('')
-
-type View = 'main' | 'articles' | 'viewer'
-const view = ref<View>('main')
-
-async function onSearchBiz() {
-  if (!bizQuery.value.trim()) return; bizSearching.value = true
-  try { const res = await searchBiz(bizQuery.value.trim()); bizResults.value = res.list } catch (e) { toast.error(e instanceof Error ? e.message : '搜索失败') } finally { bizSearching.value = false }
-}
-async function onSelectBiz(biz: BizItem) {
-  selectedBiz.value = biz; bizArticlesLoading.value = true; view.value = 'articles'
-  try { const res = await fetchBizArticles(biz.fakeid); bizArticles.value = res.articles; bizArticlesTotal.value = res.total } catch (e) { toast.error(e instanceof Error ? e.message : '获取文章失败') } finally { bizArticlesLoading.value = false }
-}
-function openViewer(url: string, title: string) { viewerUrl.value = `/api/biz/article/proxy?url=${encodeURIComponent(url)}`; viewerTitle.value = title; view.value = 'viewer' }
-function backToArticles() { view.value = 'articles'; viewerUrl.value = '' }
-function backToMain() { view.value = 'main'; selectedBiz.value = null; bizArticles.value = [] }
-
 onMounted(() => { fetchCreds(); fetchOutboundIP(); checkLoginStatus() })
 onBeforeUnmount(() => { if (loginTimer) clearInterval(loginTimer) })
 </script>
@@ -107,45 +78,12 @@ onBeforeUnmount(() => { if (loginTimer) clearInterval(loginTimer) })
       <!-- Header -->
       <div class="flex items-center gap-2 border-b px-3 h-10 shrink-0">
         <Rss class="size-4 text-primary" />
-        <span class="text-sm font-semibold flex-1 truncate">
-          <template v-if="view === 'viewer'">{{ viewerTitle || '文章预览' }}</template>
-          <template v-else-if="view === 'articles'">{{ selectedBiz?.nickname || '文章列表' }}</template>
-          <template v-else>公众号</template>
-        </span>
-        <Button v-if="view !== 'main'" size="icon-xs" variant="ghost" @click="view === 'viewer' ? backToArticles() : backToMain()"><ArrowLeft class="size-3.5" /></Button>
+        <span class="text-sm font-semibold flex-1 truncate">公众号配置</span>
         <Button size="icon-xs" variant="ghost" @click="emit('close')"><X class="size-3.5" /></Button>
       </div>
 
-      <!-- Viewer (iframe) -->
-      <div v-if="view === 'viewer'" class="flex-1 min-h-0">
-        <iframe v-if="viewerUrl" :src="viewerUrl" class="w-full h-full border-0" sandbox="allow-same-origin allow-scripts" />
-      </div>
-
-      <!-- Main view -->
-      <div v-else-if="view === 'main'" class="flex-1 overflow-auto px-3 py-3 space-y-4">
-        <!-- Search -->
-        <div class="space-y-2">
-          <div class="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">公众号搜索</div>
-          <div class="flex gap-1">
-            <Input v-model="bizQuery" placeholder="搜索公众号..." class="settings-input flex-1" @keydown.enter="onSearchBiz" />
-            <Button size="xs" variant="outline" :disabled="bizSearching || !bizQuery.trim()" @click="onSearchBiz">
-              <Loader2 v-if="bizSearching" class="size-3 animate-spin" />
-              <Search v-else class="size-3" />
-            </Button>
-          </div>
-          <div v-if="bizResults.length" class="space-y-1 max-h-64 overflow-auto">
-            <button v-for="biz in bizResults" :key="biz.fakeid"
-              class="hover:bg-muted flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-left"
-              @click="onSelectBiz(biz)">
-              <img :src="proxyImg(biz.round_head_img)" class="size-7 rounded-full shrink-0 bg-muted" />
-              <div class="min-w-0 flex-1">
-                <div class="text-[11px] font-medium truncate">{{ biz.nickname }}</div>
-                <div class="text-[9px] text-muted-foreground truncate">{{ biz.signature }}</div>
-              </div>
-            </button>
-          </div>
-        </div>
-
+      <!-- Content -->
+      <div class="flex-1 overflow-auto px-3 py-3 space-y-4">
         <!-- Login -->
         <div class="space-y-2">
           <div class="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">扫码登录</div>
@@ -201,24 +139,6 @@ onBeforeUnmount(() => { if (loginTimer) clearInterval(loginTimer) })
             <button class="text-[11px] font-mono font-medium text-primary hover:underline" @click="copyIP">{{ outboundIP }}</button>
           </div>
         </div>
-      </div>
-
-      <!-- Articles view -->
-      <div v-else-if="view === 'articles'" class="flex-1 overflow-auto px-3 py-3 space-y-2">
-        <div v-if="bizArticlesLoading" class="flex items-center justify-center py-8">
-          <Loader2 class="size-5 animate-spin text-muted-foreground" />
-        </div>
-        <div v-else-if="bizArticles.length" class="space-y-1.5">
-          <div class="text-[10px] text-muted-foreground mb-1">共 {{ bizArticlesTotal }} 篇</div>
-          <button v-for="art in bizArticles" :key="art.appmsg_id"
-            class="hover:bg-muted rounded-md border border-border/50 px-2.5 py-2 space-y-0.5 w-full text-left"
-            @click="openViewer(art.link, art.title)">
-            <div class="text-[11px] font-medium leading-tight line-clamp-2">{{ art.title }}</div>
-            <div v-if="art.digest" class="text-[9px] text-muted-foreground line-clamp-2 leading-snug">{{ art.digest }}</div>
-            <div class="text-[9px] text-muted-foreground/60">{{ new Date(art.create_time * 1000).toLocaleDateString() }}</div>
-          </button>
-        </div>
-        <div v-else class="text-[10px] text-muted-foreground text-center py-8">暂无文章</div>
       </div>
     </div>
   </div>
