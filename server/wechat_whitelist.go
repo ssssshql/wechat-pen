@@ -193,6 +193,7 @@ func runWhitelistAutomation() {
 		currentWhitelist.mu.Unlock()
 	}()
 
+	fmt.Printf("[whitelist] launched chrome, opening %s\n", targetURL)
 	// Open target URL — will redirect to /platform/login?redirect=... if not logged in
 	page, err := browser.Page(proto.TargetCreateTarget{URL: targetURL})
 	if err != nil {
@@ -215,9 +216,19 @@ func runWhitelistAutomation() {
 	}
 
 	// Detect initial state — login page shows QR code, redirect target may show whitelist directly
+	info, _ := page.Info()
+	currentURL := ""
+	if info != nil {
+		currentURL = info.URL
+	}
+	fmt.Printf("[whitelist] page URL after load: %s\n", currentURL)
+
 	state := detectPageState(page)
+	fmt.Printf("[whitelist] initial page state: %s\n", state)
+
 	if state == "qrcode" {
 		qr := extractQRCodeFromPage(page)
+		fmt.Printf("[whitelist] QR code extracted: %v (len=%d)\n", qr != "", len(qr))
 		if qr == "" {
 			setWhitelistError("无法获取登录二维码")
 			return
@@ -226,9 +237,11 @@ func runWhitelistAutomation() {
 		currentWhitelist.QRCode = qr
 		currentWhitelist.Flow = "login"
 		currentWhitelist.mu.Unlock()
+		fmt.Printf("[whitelist] QR code set, waiting for scan (current status=%s flow=%s)\n", currentWhitelist.Status, currentWhitelist.Flow)
 
 		// Wait for user to scan QR — detect when URL changes away from /platform/login
 		if !waitForLoginRedirect(page, 180*time.Second, cancelCh) {
+			fmt.Printf("[whitelist] login redirect wait timed out or cancelled\n")
 			return
 		}
 
@@ -238,16 +251,27 @@ func runWhitelistAutomation() {
 
 		// Page navigated back to target URL — wait for it to fully load
 		time.Sleep(3 * time.Second)
+		info2, _ := page.Info()
+		if info2 != nil {
+			fmt.Printf("[whitelist] after login redirect, URL: %s\n", info2.URL)
+		}
 		state = detectPageState(page)
+		fmt.Printf("[whitelist] state after login: %s\n", state)
 	}
 
 	if state != "whitelist" {
 		// Try waiting a bit more — page might still be rendering
 		time.Sleep(3 * time.Second)
 		state = detectPageState(page)
+		fmt.Printf("[whitelist] state after extra wait: %s\n", state)
 	}
 
 	if state != "whitelist" {
+		// Dump page content for debugging
+		debugHTML, _ := page.Eval(`document.documentElement.outerHTML.substring(0, 2000)`)
+		if debugHTML != nil {
+			fmt.Printf("[whitelist] page HTML (first 2000 chars): %s\n", debugHTML.Value.Str())
+		}
 		setWhitelistError("登录后未能自动跳转到 IP 白名单页面，请确认 AppID 正确")
 		return
 	}
@@ -325,12 +349,16 @@ func waitForLoginRedirect(page *rod.Page, timeout time.Duration, cancelCh chan s
 		time.Sleep(1 * time.Second)
 		info, err := page.Info()
 		if err != nil {
+			fmt.Printf("[whitelist] waitForRedirect: page.Info error: %v\n", err)
 			continue
 		}
+		fmt.Printf("[whitelist] waitForRedirect: URL = %s\n", info.URL)
 		if !strings.Contains(info.URL, "/platform/login") {
+			fmt.Printf("[whitelist] login redirect detected, now at: %s\n", info.URL)
 			return true
 		}
 	}
+	fmt.Printf("[whitelist] waitForRedirect: timed out\n")
 	return false
 }
 
@@ -351,7 +379,7 @@ func waitQRCodeGone(page *rod.Page, timeout time.Duration, cancelCh chan struct{
 
 func detectPageState(page *rod.Page) string {
 	const js = `(function() {
-		if (document.querySelector('img[src*="qrcode"], img[alt="qrcode"], img[alt*="qrcode"]'))
+		if (document.querySelector('img[src*="qrcode"], img[alt="qrcode"], img[alt*="qrcode"], img[src*="qrcode"]'))
 			return 'qrcode';
 		var ps = document.querySelectorAll('p');
 		for (var i = 0; i < ps.length; i++) {
@@ -362,9 +390,11 @@ func detectPageState(page *rod.Page) string {
 	})()`
 	result, err := page.Eval(js)
 	if err != nil {
+		fmt.Printf("[whitelist] detectPageState eval error: %v\n", err)
 		return "unknown"
 	}
-	return result.Value.Str()
+	state := result.Value.Str()
+	return state
 }
 
 func extractQRCodeFromPage(page *rod.Page) string {
@@ -372,12 +402,15 @@ func extractQRCodeFromPage(page *rod.Page) string {
 	selectors := []string{
 		`img[alt="qrcode"]`,
 		`img[alt*="qrcode"]`,
+		`img[src*="qrcode"]`,
 	}
 	for _, sel := range selectors {
 		el, err := page.Timeout(3 * time.Second).Element(sel)
 		if err != nil || el == nil {
+			fmt.Printf("[whitelist] QR selector %q: not found\n", sel)
 			continue
 		}
+		fmt.Printf("[whitelist] QR selector %q: found\n", sel)
 		src, _ := el.Attribute("src")
 		if src != nil && strings.HasPrefix(*src, "data:image") {
 			parts := strings.SplitN(*src, ",", 2)
