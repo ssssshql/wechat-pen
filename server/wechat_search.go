@@ -266,10 +266,9 @@ func mpGet(endpoint string, params map[string]string) ([]byte, error) {
 // --- Image Proxy (hotlink bypass) ---
 
 var (
-	imgTagRe   = regexp.MustCompile(`(?i)<img\b[^>]*>`)
-	dataSrcRe  = regexp.MustCompile(`data-src="([^"]*)"`)
-	srcRe      = regexp.MustCompile(`\ssrc="([^"]*)"`)
-	mmbizURLRe = regexp.MustCompile(`(src|data-src)="((?:https?:)?//mmbiz\.qpic\.cn/[^"]*)"`)
+	imgTagRe  = regexp.MustCompile(`(?i)<img\b[^>]*>`)
+	dataSrcRe = regexp.MustCompile(`data-src="([^"]*)"`)
+	srcRe     = regexp.MustCompile(`\ssrc="([^"]*)"`)
 )
 
 // rewriteDataSrc replaces data-src with src when src is empty/missing (WeChat lazy-loading JS won't run in iframe).
@@ -289,25 +288,20 @@ func rewriteDataSrc(html string) string {
 	})
 }
 
-// proxyRewrite rewrites mmbiz.qpic.cn image URLs to go through /api/biz/image/proxy.
+// proxyRewrite rewrites ALL mmbiz.qpic.cn URLs to go through /api/biz/image/proxy.
+// Handles src="...", data-src="...", url(...), and bare URLs.
+var fullMmbizURLRe = regexp.MustCompile(`(?:https?:)?//mmbiz\.qpic\.cn/[^\s"'<>\)]+`)
+
 func proxyRewrite(html string) string {
-	return mmbizURLRe.ReplaceAllStringFunc(html, func(match string) string {
-		parts := mmbizURLRe.FindStringSubmatch(match)
-		if len(parts) < 3 {
-			return match
-		}
-		attr := parts[1]
-		raw := parts[2]
-		// Protocol-relative → https
+	return fullMmbizURLRe.ReplaceAllStringFunc(html, func(raw string) string {
 		if strings.HasPrefix(raw, "//") {
 			raw = "https:" + raw
 		}
-		// http → https (mmbiz.qpic.cn supports both, prefer https)
 		if strings.HasPrefix(raw, "http://") {
 			raw = "https" + raw[4:]
 		}
 		raw = strings.ReplaceAll(raw, "&amp;", "&")
-		return attr + `="` + `/api/biz/image/proxy?url=` + url.QueryEscape(raw) + `"`
+		return `/api/biz/image/proxy?url=` + url.QueryEscape(raw)
 	})
 }
 
@@ -323,12 +317,18 @@ func handleImageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize: ensure https://
+	if strings.HasPrefix(rawURL, "http://") {
+		rawURL = "https" + rawURL[4:]
+	}
+	if strings.HasPrefix(rawURL, "//") {
+		rawURL = "https:" + rawURL
+	}
+
 	// Only allow known WeChat / QQ image domains
 	allowedPrefixes := []string{
 		"https://mmbiz.qpic.cn/",
-		"http://mmbiz.qpic.cn/",
 		"https://thirdwx.qlogo.cn/",
-		"http://thirdwx.qlogo.cn/",
 		"https://wx.qlogo.cn/",
 	}
 	allowed := false
@@ -434,9 +434,6 @@ func handleArticleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Remove X-Frame-Options meta tag if present
 	html = strings.ReplaceAll(html, `<meta http-equiv="X-Frame-Options"`, `<meta http-equiv="disabled-X-Frame-Options"`)
-
-	// Log for debugging
-	fmt.Printf("[article-proxy] url=%s mmbiz_urls_rewritten=%d\n", rawURL, strings.Count(html, "/api/biz/image/proxy?url="))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=300")
