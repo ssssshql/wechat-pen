@@ -152,6 +152,31 @@ func highlightToInlineHTML(source, lang, themeName string) (string, error) {
 	return buf.String(), nil
 }
 
+// chromaThemeColors reads the background and default text color from a chroma style.
+func chromaThemeColors(themeName string) (bg, fg string) {
+	styleName := mapHighlightTheme(themeName)
+	style := styles.Get(styleName)
+	if style == nil {
+		style = styles.Get("github")
+	}
+	if style == nil {
+		style = styles.Fallback
+	}
+
+	bgEntry := style.Get(chroma.Background)
+	if bgEntry.Background.IsSet() {
+		bg = bgEntry.Background.String()
+	} else if bgEntry.Colour.IsSet() {
+		bg = bgEntry.Colour.String()
+	}
+
+	defaultEntry := style.Get(chroma.Text)
+	if defaultEntry.Colour.IsSet() {
+		fg = defaultEntry.Colour.String()
+	}
+	return bg, fg
+}
+
 func mapHighlightTheme(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "monokai", "dark":

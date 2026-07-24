@@ -1,28 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
-import { Slider } from '@/components/ui/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { fetchStyles, reloadThemes, importTheme, deleteTheme, type StyleOption } from '@/lib/api'
 import { HIGHLIGHT_THEMES, SNIPPETS, STYLE_PRESETS, type HighlightTheme, type StylePack } from '@/lib/types'
 
 const style = defineModel<StylePack>('style', { required: true })
 const primaryColor = defineModel<string>('primaryColor', { required: true })
-const title = defineModel<string>('title', { required: true })
-const textIndent = defineModel<boolean>('textIndent', { required: true })
-const justify = defineModel<boolean>('justify', { required: true })
-const paragraphGap = defineModel<string>('paragraphGap', { required: true })
-const fontSizePx = defineModel<number[]>('fontSizePx', { required: true })
-const lineHeight = defineModel<number[]>('lineHeight', { required: true })
-const highlight = defineModel<boolean>('highlight', { required: true })
 const highlightTheme = defineModel<HighlightTheme>('highlightTheme', { required: true })
-const toc = defineModel<boolean>('toc', { required: true })
-const footer = defineModel<boolean>('footer', { required: true })
-const imageCaption = defineModel<boolean>('imageCaption', { required: true })
 
 const emit = defineEmits<{ styleChange: [v: unknown]; insert: [text: string] }>()
 const styleOptions = ref<StyleOption[]>(STYLE_PRESETS.map((s) => ({ id: s.value, name: s.label, description: s.desc || '', primary: s.color, builtin: true })))
@@ -41,11 +27,8 @@ onMounted(() => { loadStyleOptions() })
 
 <template>
   <div class="divide-y divide-black/[0.04]">
-    <!-- 输出配置 -->
+    <!-- 样式 -->
     <div class="space-y-2.5 px-3 py-3">
-      <div class="flex items-center justify-between">
-        <span class="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">输出</span>
-      </div>
       <div class="space-y-2">
         <div>
           <div class="mb-1 flex items-center justify-between">
@@ -68,79 +51,19 @@ onMounted(() => { loadStyleOptions() })
           </Select>
           <p v-if="current?.description" class="text-muted-foreground mt-0.5 pl-0.5 text-[10px] leading-tight">{{ current.description }}</p>
         </div>
-
-        <div class="flex items-center gap-2">
-          <input v-model="primaryColor" type="color" class="color-picker" />
-          <Input v-model="primaryColor" class="settings-input" />
-        </div>
-
-        <Input v-model="title" placeholder="文章标题" class="settings-input" />
       </div>
     </div>
 
-    <!-- 排版 -->
+    <!-- 代码高亮主题 -->
     <div class="space-y-2.5 px-3 py-3">
-      <span class="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">排版</span>
+      <span class="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">代码高亮</span>
       <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <Label for="indent" class="text-xs cursor-pointer">首行缩进</Label>
-          <Switch id="indent" v-model:checked="textIndent" size="sm" />
-        </div>
-        <div class="flex items-center justify-between">
-          <Label for="justify" class="text-xs cursor-pointer">两端对齐</Label>
-          <Switch id="justify" v-model:checked="justify" size="sm" />
-        </div>
-        <Select v-model="paragraphGap">
-          <SelectTrigger class="settings-select-trigger w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="0.6em">段间距 紧凑</SelectItem>
-            <SelectItem value="1em">段间距 标准</SelectItem>
-            <SelectItem value="1.4em">段间距 宽松</SelectItem>
-          </SelectContent>
-        </Select>
-        <div>
-          <div class="mb-1 flex items-center justify-between">
-            <span class="text-[10px] text-muted-foreground">字号</span>
-            <span class="text-muted-foreground font-mono text-[10px]">{{ fontSizePx[0] }}px</span>
-          </div>
-          <Slider v-model="fontSizePx" :min="14" :max="20" :step="1" class="[&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-thumb]]:size-3" />
-        </div>
-        <div>
-          <div class="mb-1 flex items-center justify-between">
-            <span class="text-[10px] text-muted-foreground">行高</span>
-            <span class="text-muted-foreground font-mono text-[10px]">{{ lineHeight[0].toFixed(2) }}</span>
-          </div>
-          <Slider v-model="lineHeight" :min="1.4" :max="2.2" :step="0.05" class="[&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-thumb]]:size-3" />
-        </div>
-      </div>
-    </div>
-
-    <!-- 增强 -->
-    <div class="space-y-2.5 px-3 py-3">
-      <span class="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">增强</span>
-      <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <Label for="hl" class="text-xs cursor-pointer">输出代码高亮</Label>
-          <Switch id="hl" v-model:checked="highlight" size="sm" />
-        </div>
-        <Select v-model="highlightTheme" :disabled="!highlight">
+        <Select v-model="highlightTheme">
           <SelectTrigger class="settings-select-trigger w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem v-for="h in HIGHLIGHT_THEMES" :key="h.value" :value="h.value">{{ h.label }}</SelectItem>
           </SelectContent>
         </Select>
-        <div class="flex items-center justify-between">
-          <Label for="toc" class="text-xs cursor-pointer">自动目录</Label>
-          <Switch id="toc" v-model:checked="toc" size="sm" />
-        </div>
-        <div class="flex items-center justify-between">
-          <Label for="footer" class="text-xs cursor-pointer">文末引导</Label>
-          <Switch id="footer" v-model:checked="footer" size="sm" />
-        </div>
-        <div class="flex items-center justify-between">
-          <Label for="cap" class="text-xs cursor-pointer">图片图注</Label>
-          <Switch id="cap" v-model:checked="imageCaption" size="sm" />
-        </div>
       </div>
     </div>
 

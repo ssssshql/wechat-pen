@@ -7,22 +7,86 @@ import {
   Italic,
   Link2,
   List,
+  ListIndentIncrease,
   ListOrdered,
+  Puzzle,
   Quote,
+  TextAlignJustify,
+  TextAlignStart,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Separator } from '@/components/ui/separator'
+import { fetchStyles, type StyleOption } from '@/lib/api'
+import {
+  HIGHLIGHT_THEMES,
+  SNIPPETS,
+  STYLE_PRESETS,
+  type HighlightTheme,
+  type StylePack,
+} from '@/lib/types'
+import { onMounted, ref } from 'vue'
+
+const style = defineModel<StylePack>('style', { required: true })
+const highlightTheme = defineModel<HighlightTheme>('highlightTheme', { required: true })
+const textIndent = defineModel<boolean>('textIndent', { required: true })
+const justify = defineModel<boolean>('justify', { required: true })
 
 const emit = defineEmits<{
   action: [type: string]
+  insert: [text: string]
+  styleChange: [v: unknown]
+  primaryColor: [v: string]
 }>()
 
-const actions: { id: string; label: string; icon: unknown }[] = [
+const styleOptions = ref<StyleOption[]>(
+  STYLE_PRESETS.map((s) => ({
+    id: s.value,
+    name: s.label,
+    description: s.desc || '',
+    primary: s.color,
+    builtin: true,
+  })),
+)
+
+async function loadStyleOptions() {
+  try {
+    const list = await fetchStyles()
+    if (list.length) styleOptions.value = list
+  } catch (e) {
+    console.warn(e)
+  }
+}
+
+function onStyleSelect(v: unknown) {
+  emit('styleChange', v)
+  const opt = styleOptions.value.find((s) => s.id === v)
+  if (opt?.primary) emit('primaryColor', opt.primary)
+}
+
+onMounted(() => {
+  loadStyleOptions()
+})
+
+const formatActions: { id: string; label: string; icon: unknown }[] = [
   { id: 'h2', label: '二级标题', icon: Heading2 },
   { id: 'bold', label: '加粗 Ctrl+B', icon: Bold },
   { id: 'italic', label: '斜体 Ctrl+I', icon: Italic },
@@ -37,8 +101,9 @@ const actions: { id: string; label: string; icon: unknown }[] = [
 
 <template>
   <TooltipProvider :delay-duration="200">
-    <div class="toolbar-row flex flex-wrap items-center gap-px border-b px-1.5 py-0.5">
-      <Tooltip v-for="a in actions" :key="a.id">
+    <div class="toolbar-row flex flex-wrap items-center gap-1 border-b px-2 py-1">
+      <!-- Format buttons -->
+      <Tooltip v-for="a in formatActions" :key="a.id">
         <TooltipTrigger as-child>
           <Button
             variant="ghost"
@@ -51,6 +116,85 @@ const actions: { id: string; label: string; icon: unknown }[] = [
         </TooltipTrigger>
         <TooltipContent side="bottom">{{ a.label }}</TooltipContent>
       </Tooltip>
+
+      <Separator orientation="vertical" class="mx-1 h-4" />
+
+      <!-- Style selector -->
+      <Select :model-value="style" @update:model-value="onStyleSelect">
+        <SelectTrigger class="h-6 w-[80px] text-[11px] border-none bg-transparent px-1.5">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem v-for="s in styleOptions" :key="s.id" :value="s.id">
+            {{ s.name }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+
+      <!-- Highlight theme selector -->
+      <Select v-model="highlightTheme">
+        <SelectTrigger class="h-6 w-[100px] text-[11px] border-none bg-transparent px-1.5">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem v-for="h in HIGHLIGHT_THEMES" :key="h.value" :value="h.value">
+            {{ h.label }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Separator orientation="vertical" class="mx-1 h-4" />
+
+      <!-- Text indent toggle -->
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            :variant="textIndent ? 'secondary' : 'ghost'"
+            size="icon-xs"
+            class="text-muted-foreground hover:text-foreground"
+            @click="textIndent = !textIndent"
+          >
+            <ListIndentIncrease class="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">首行缩进</TooltipContent>
+      </Tooltip>
+
+      <!-- Justify toggle -->
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            :variant="justify ? 'secondary' : 'ghost'"
+            size="icon-xs"
+            class="text-muted-foreground hover:text-foreground"
+            @click="justify = !justify"
+          >
+            <component :is="justify ? TextAlignJustify : TextAlignStart" class="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{{ justify ? '两端对齐' : '左对齐' }}</TooltipContent>
+      </Tooltip>
+
+      <Separator orientation="vertical" class="mx-1 h-4" />
+
+      <!-- Snippets dropdown -->
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <DropdownMenuTrigger as-child>
+              <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground">
+                <Puzzle class="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">插入组件</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem v-for="s in SNIPPETS" :key="s.label" @click="emit('insert', s.insert)">
+            {{ s.label }}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   </TooltipProvider>
 </template>

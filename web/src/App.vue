@@ -20,14 +20,7 @@ const title = ref('示例文章')
 const primaryColor = ref('#07c160')
 const textIndent = ref(false)
 const justify = ref(true)
-const highlight = ref(true)
 const highlightTheme = ref<HighlightTheme>('github')
-const toc = ref(false)
-const footer = ref(false)
-const imageCaption = ref(true)
-const paragraphGap = ref('1em')
-const fontSizePx = ref([16])
-const lineHeight = ref([1.75])
 const html = ref('')
 const preview = ref('')
 const latency = ref(0)
@@ -135,21 +128,19 @@ let draftTimer: ReturnType<typeof setTimeout> | null = null
 const stats = computed(() => computeStats(markdown.value, title.value))
 const styleLabel = computed(() => STYLE_PRESETS.find((s) => s.value === style.value)?.label ?? style.value)
 const activeHistory = computed(() => { const d = drafts.value.find((x) => x.id === activeDraftId.value); return d?.history || [] })
-const fontSize = computed(() => `${fontSizePx.value[0]}px`)
-const lineHeightStr = computed(() => String(lineHeight.value[0]))
 
 function buildReq() {
   return {
     markdown: markdown.value, theme: theme.value, title: title.value, style: style.value,
     primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value,
-    paragraphGap: paragraphGap.value, fontSize: fontSize.value, lineHeight: lineHeightStr.value,
-    highlight: highlight.value, highlightTheme: highlightTheme.value, toc: toc.value,
-    footer: footer.value, imageCaption: imageCaption.value,
+    highlightTheme: highlightTheme.value,
+    toc: false, footer: false,
     previewWidth: 'phone' as PreviewWidth, previewShell: 'dark' as PreviewShell,
   }
 }
 
 function onStyleChange(v: unknown) { style.value = String(v) }
+function onPrimaryColor(v: string) { primaryColor.value = v }
 function schedule() { if (timer) clearTimeout(timer); timer = setTimeout(runConvert, 280); scheduleDraftSave() }
 function scheduleDraftSave() { if (draftTimer) clearTimeout(draftTimer); draftTimer = setTimeout(persistActiveDraft, 500) }
 
@@ -162,8 +153,8 @@ async function runConvert() {
   } catch (e) { status.value = e instanceof Error ? e.message : '转换失败' } finally { loading.value = false }
 }
 
-function currentSettings() { return { theme: theme.value, style: style.value, title: title.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlight: highlight.value, highlightTheme: highlightTheme.value, toc: toc.value, footer: footer.value, imageCaption: imageCaption.value, paragraphGap: paragraphGap.value, fontSizePx: fontSizePx.value[0], lineHeight: lineHeight.value[0], copyMode: copyMode.value } }
-function applySettings(s: Record<string, unknown>) { if (s.theme) theme.value = s.theme as Theme; if (s.style) style.value = s.style as StylePack; if (typeof s.title === 'string') title.value = s.title; if (typeof s.primaryColor === 'string') primaryColor.value = s.primaryColor; if (typeof s.textIndent === 'boolean') textIndent.value = s.textIndent; if (typeof s.justify === 'boolean') justify.value = s.justify; if (typeof s.highlight === 'boolean') highlight.value = s.highlight; if (s.highlightTheme) highlightTheme.value = s.highlightTheme as HighlightTheme; if (typeof s.toc === 'boolean') toc.value = s.toc; if (typeof s.footer === 'boolean') footer.value = s.footer; if (typeof s.imageCaption === 'boolean') imageCaption.value = s.imageCaption; if (typeof s.paragraphGap === 'string') paragraphGap.value = s.paragraphGap; if (typeof s.fontSizePx === 'number') fontSizePx.value = [s.fontSizePx]; if (typeof s.lineHeight === 'number') lineHeight.value = [s.lineHeight]; if (typeof s.lineHeightNum === 'number') lineHeight.value = [s.lineHeightNum]; if (s.copyMode === 'rich' || s.copyMode === 'source') copyMode.value = s.copyMode }
+function currentSettings() { return { theme: theme.value, style: style.value, title: title.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlightTheme: highlightTheme.value, copyMode: copyMode.value } }
+function applySettings(s: Record<string, unknown>) { if (s.theme) theme.value = s.theme as Theme; if (s.style) style.value = s.style as StylePack; if (typeof s.title === 'string') title.value = s.title; if (typeof s.primaryColor === 'string') primaryColor.value = s.primaryColor; if (typeof s.textIndent === 'boolean') textIndent.value = s.textIndent; if (typeof s.justify === 'boolean') justify.value = s.justify; if (s.highlightTheme) highlightTheme.value = s.highlightTheme as HighlightTheme; if (s.copyMode === 'rich' || s.copyMode === 'source') copyMode.value = s.copyMode }
 
 function loadSample() { markdown.value = SAMPLE_MD; schedule(); toast.message('已载入示例') }
 function insertSnippet(text: string) { editorRef.value?.insertAtCursor(text); schedule(); mobileSettings.value = false }
@@ -205,7 +196,7 @@ async function publishDraft() {
 }
 
 function persistActiveDraft() {
-  if (!activeDraftId.value) { const id = newDraftId(); activeDraftId.value = id; setActiveDraftId(id); drafts.value = [{ id, name: title.value || '未命名', markdown: markdown.value, updatedAt: Date.now(), settings: { style: style.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlight: highlight.value, highlightTheme: highlightTheme.value, toc: toc.value, footer: footer.value, imageCaption: imageCaption.value, fontSize: fontSize.value }, history: [] }, ...drafts.value]; saveDrafts(drafts.value); return }
+  if (!activeDraftId.value) { const id = newDraftId(); activeDraftId.value = id; setActiveDraftId(id); drafts.value = [{ id, name: title.value || '未命名', markdown: markdown.value, updatedAt: Date.now(), settings: { style: style.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlightTheme: highlightTheme.value }, history: [] }, ...drafts.value]; saveDrafts(drafts.value); return }
   const idx = drafts.value.findIndex((d) => d.id === activeDraftId.value)
   if (idx >= 0) { let d: DraftItem = { ...drafts.value[idx], name: title.value || drafts.value[idx].name, markdown: markdown.value, updatedAt: Date.now() }; d = pushHistory(d, markdown.value, title.value); drafts.value[idx] = d; saveDrafts(drafts.value) }
 }
@@ -219,7 +210,7 @@ async function onBatchFiles(e: Event) { const input = e.target as HTMLInputEleme
 function wrapSelection(before: string, after: string) { editorRef.value?.wrapSelection(before, after); schedule() }
 function onKeydown(e: KeyboardEvent) { const mod = e.metaKey || e.ctrlKey; if (!mod) return; if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**') } else if (e.key === 'i') { e.preventDefault(); wrapSelection('*', '*') } else if (e.key === 'k') { e.preventDefault(); wrapSelection('[', '](https://)') } else if (e.shiftKey && e.key === 'C') { e.preventDefault(); copyHTML() } else if (e.key === 's') { e.preventDefault(); persistActiveDraft(); toast.success('已保存') } }
 
-watch([markdown, theme, style, title, primaryColor, textIndent, justify, highlight, highlightTheme, toc, footer, imageCaption, paragraphGap, fontSizePx, lineHeight], () => schedule())
+watch([markdown, theme, style, title, primaryColor, textIndent, justify, highlightTheme], () => schedule())
 
 onMounted(() => { const settings = loadSettings(currentSettings()); applySettings(settings as Record<string, unknown>); drafts.value = loadDrafts(); const aid = getActiveDraftId(); if (aid && drafts.value.some((d) => d.id === aid)) selectDraft(aid); else if (drafts.value[0]) selectDraft(drafts.value[0].id); else runConvert(); window.addEventListener('keydown', onKeydown); checkMpStatus() })
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
@@ -280,8 +271,26 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
 
     <!-- Main -->
     <div class="flex min-h-0 flex-1 overflow-hidden">
-      <aside class="scroll-panel hidden w-[224px] shrink-0 overflow-y-auto border-r bg-white/60 lg:block">
-        <SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:title="title" v-model:text-indent="textIndent" v-model:justify="justify" v-model:paragraph-gap="paragraphGap" v-model:font-size-px="fontSizePx" v-model:line-height="lineHeight" v-model:highlight="highlight" v-model:highlight-theme="highlightTheme" v-model:toc="toc" v-model:footer="footer" v-model:image-caption="imageCaption" @style-change="onStyleChange" @insert="insertSnippet" />
+      <aside class="scroll-panel hidden w-[224px] shrink-0 overflow-y-auto border-r bg-white/60 lg:flex lg:flex-col">
+        <div class="flex h-9 shrink-0 items-center justify-between border-b px-2.5">
+          <span class="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">草稿</span>
+          <Button size="icon-xs" variant="ghost" @click="createDraft" title="新建草稿"><Plus class="size-3.5" /></Button>
+        </div>
+        <div class="flex-1 overflow-y-auto py-0.5">
+          <div v-if="!drafts.length" class="px-3 py-6 text-center text-muted-foreground text-[11px]">暂无草稿</div>
+          <button
+            v-for="d in drafts" :key="d.id"
+            class="group hover:bg-muted flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left transition-colors"
+            :class="d.id === activeDraftId ? 'bg-muted' : ''"
+            @click="selectDraft(d.id)"
+          >
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-xs font-medium" :class="d.id === activeDraftId ? 'text-primary' : ''">{{ d.name }}</div>
+              <div class="text-muted-foreground text-[10px]">{{ new Date(d.updatedAt).toLocaleString() }}</div>
+            </div>
+            <Button size="icon-xs" variant="ghost" class="opacity-0 group-hover:opacity-100 transition-opacity shrink-0" @click.stop="deleteDraft(d.id)"><Trash2 class="size-3" /></Button>
+          </button>
+        </div>
       </aside>
 
       <section class="editor-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r">
@@ -289,8 +298,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
           <span class="flex items-center gap-1.5 font-medium tracking-wide"><FileCode2 class="size-3.5" />Markdown</span>
           <span class="tabular-nums">{{ stats.total }} 字 · {{ stats.readingMin }}分 <span v-if="stats.titleWarn" class="text-amber-500 ml-1">标题 {{ stats.titleLen }}字</span></span>
         </div>
-        <EditorToolbar @action="onToolbar" />
-        <MarkdownEditor ref="editorRef" v-model="markdown" />
+        <MarkdownEditor ref="editorRef" v-model="markdown" class="flex-1" />
+        <EditorToolbar v-model:style="style" v-model:highlight-theme="highlightTheme" v-model:text-indent="textIndent" v-model:justify="justify" @action="onToolbar" @insert="insertSnippet" @style-change="onStyleChange" @primary-color="onPrimaryColor" />
       </section>
 
       <section class="preview-pane flex min-h-0 w-[460px] shrink-0 flex-col overflow-hidden">
@@ -302,7 +311,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
     <div v-if="mobileSettings" class="fixed inset-0 z-40 bg-black/40 lg:hidden" @click.self="mobileSettings = false">
       <div class="bg-background absolute inset-y-0 left-0 flex w-[min(100%,300px)] flex-col shadow-xl">
         <div class="flex h-10 items-center justify-between border-b px-3"><div class="flex items-center gap-1.5 text-sm font-medium"><Settings2 class="size-4" />设置</div><Button size="icon-xs" variant="ghost" @click="mobileSettings = false"><X class="size-3.5" /></Button></div>
-        <div class="scroll-panel flex-1"><SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:title="title" v-model:text-indent="textIndent" v-model:justify="justify" v-model:paragraph-gap="paragraphGap" v-model:font-size-px="fontSizePx" v-model:line-height="lineHeight" v-model:highlight="highlight" v-model:highlight-theme="highlightTheme" v-model:toc="toc" v-model:footer="footer" v-model:image-caption="imageCaption" @style-change="onStyleChange" @insert="insertSnippet" /></div>
+        <div class="scroll-panel flex-1"><SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:highlight-theme="highlightTheme" @style-change="onStyleChange" @insert="insertSnippet" /></div>
       </div>
     </div>
 

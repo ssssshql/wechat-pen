@@ -437,6 +437,9 @@ func applyWeChatStyles(fragment string, cfg Config) (string, CleanReport, error)
 		highlightCodeBlocks(root, cfg.HighlightTheme)
 	}
 
+	// Read chroma theme colors for <pre>/<code> overrides
+	hlBG, hlFG := chromaThemeColors(cfg.HighlightTheme)
+
 	// Track dropped attrs
 	attrDrops := map[string]struct{}{}
 
@@ -466,10 +469,33 @@ func applyWeChatStyles(fragment string, cfg Config) (string, CleanReport, error)
 		style = strings.ReplaceAll(style, "{{primary}}", cfg.PrimaryColor)
 		if n.Data == "code" && n.Parent != nil && n.Parent.DataAtom == atom.Pre {
 			setStyleAbsolute(n, pack.PreCode)
+			// Override default text color from chroma theme
+			if hlFG != "" {
+				st := attrVal(n, "style")
+				st = replaceCSSProp(st, "color", hlFG)
+				setStyleAbsolute(n, st)
+			}
 			applySpecial(n, pack, cfg)
 			return
 		}
 		setStyle(n, style)
+		// Override <pre> background/color from chroma theme
+		if n.Data == "pre" {
+			st := attrVal(n, "style")
+			changed := false
+			if hlBG != "" {
+				st = replaceCSSProp(st, "background", hlBG)
+				st = replaceCSSProp(st, "background-color", hlBG)
+				changed = true
+			}
+			if hlFG != "" {
+				st = replaceCSSProp(st, "color", hlFG)
+				changed = true
+			}
+			if changed {
+				setStyleAbsolute(n, st)
+			}
+		}
 		applySpecial(n, pack, cfg)
 	})
 
@@ -569,6 +595,22 @@ func walk(n *html.Node, fn func(*html.Node)) {
 		walk(c, fn)
 		c = next
 	}
+}
+
+// replaceCSSProp replaces the value of a CSS property in an inline style string.
+func replaceCSSProp(style, prop, newVal string) string {
+	// Match "prop:value;" or "prop:value" at end
+	sep := prop + ":"
+	idx := strings.Index(style, sep)
+	if idx < 0 {
+		return style + sep + newVal + ";"
+	}
+	start := idx + len(sep)
+	end := strings.Index(style[start:], ";")
+	if end < 0 {
+		return style[:start] + newVal
+	}
+	return style[:start] + newVal + style[start+end:]
 }
 
 var dropTags = map[string]bool{

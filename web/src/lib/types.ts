@@ -13,14 +13,14 @@ export interface ConvertRequest {
   primaryColor: string
   textIndent: boolean
   justify: boolean
-  paragraphGap: string
-  fontSize: string
-  lineHeight: string
-  highlight: boolean
+  paragraphGap?: string
+  fontSize?: string
+  lineHeight?: string
+  highlight?: boolean
   highlightTheme: HighlightTheme
-  toc: boolean
-  footer: boolean
-  imageCaption: boolean
+  toc?: boolean
+  footer?: boolean
+  imageCaption?: boolean
   previewWidth?: PreviewWidth
   previewShell?: PreviewShell
 }
