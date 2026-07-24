@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wechat-pen · 公众号 Markdown 转换</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e2330;
+    --border: #2a3142;
+    --text: #e8ecf4;
+    --muted: #8b93a7;
+    --accent: #07c160;
+    --accent-2: #3d8bfd;
+    --danger: #f85149;
+    --font: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Consolas, "Cascadia Code", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--font);
+    background: radial-gradient(1200px 600px at 10% -10%, #1a2740 0%, transparent 55%),
+                radial-gradient(900px 500px at 100% 0%, #14281f 0%, transparent 50%),
+                var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(15,17,21,.75);
+    backdrop-filter: blur(10px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    letter-spacing: .02em;
+  }
+  .brand .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+  }
+  .brand span { color: var(--muted); font-weight: 500; font-size: 13px; margin-left: 4px; }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+  label.field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  select, input[type="text"] {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
+  select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent-2); border-color: var(--accent-2); }
+  button {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: .15s background, .15s border-color, .15s transform;
+  }
+  button:hover { background: #262c3d; }
+  button:active { transform: translateY(1px); }
+  button.primary {
+    background: linear-gradient(180deg, #12d46b, #07c160);
+    border-color: #06a851;
+    color: #04210f;
+  }
+  button.primary:hover { filter: brightness(1.05); }
+  button.ghost { background: transparent; }
+  button.ok { border-color: var(--accent); color: var(--accent); }
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+    min-height: 0;
+    gap: 0;
+  }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+  }
+  .pane:last-child { border-right: none; }
+  .pane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    background: rgba(23,26,33,.6);
+  }
+  .pane-head .meta { font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0; }
+  #editor {
+    flex: 1;
+    width: 100%;
+    resize: none;
+    border: 0;
+    padding: 18px 20px;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.65;
+    tab-size: 2;
+  }
+  .preview-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    background: #e8e8e8;
+    position: relative;
+  }
+  #previewFrame {
+    flex: 1;
+    width: 100%;
+    border: 0;
+    background: #e8e8e8;
+  }
+  .status {
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    background: rgba(15,17,21,.85);
+  }
+  .status .err { color: var(--danger); }
+  .status .ok { color: var(--accent); }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button {
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 6px;
+  }
+  .tabs button.active {
+    background: var(--accent-2);
+    border-color: transparent;
+    color: #fff;
+  }
+  #htmlView {
+    display: none;
+    flex: 1;
+    margin: 0;
+    padding: 16px 18px;
+    overflow: auto;
+    background: var(--panel);
+    color: #c9d1d9;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 320px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="dot"></div>
+    wechat-pen
+    <span>Markdown → 公众号 HTML</span>
+  </div>
+  <div class="toolbar">
+    <label class="field">主题
+      <select id="theme">
+        <option value="wechat" selected>微信公众号（内联样式）</option>
+        <option value="default">通用 HTML</option>
+      </select>
+    </label>
+    <label class="field">标题
+      <input id="title" type="text" placeholder="文章标题" value="示例文章" style="width:140px">
+    </label>
+    <button class="ghost" id="btnSample" title="载入示例">示例</button>
+    <button class="primary" id="btnCopy" title="复制粘贴到公众号编辑器">复制 HTML</button>
+  </div>
+</header>
+<main>
+  <section class="pane">
+    <div class="pane-head">
+      <span>Markdown</span>
+      <span class="meta" id="charCount">0 字</span>
+    </div>
+    <textarea id="editor" spellcheck="false" placeholder="在此粘贴或编写 Markdown…"></textarea>
+  </section>
+  <section class="pane">
+    <div class="pane-head">
+      <div class="tabs">
+        <button type="button" class="active" data-view="preview">预览</button>
+        <button type="button" data-view="html">HTML 源码</button>
+      </div>
+      <span class="meta" id="latency"></span>
+    </div>
+    <div class="preview-wrap" id="previewWrap">
+      <iframe id="previewFrame" sandbox="allow-same-origin" title="preview"></iframe>
+      <pre id="htmlView"></pre>
+    </div>
+  </section>
+</main>
+<div class="status">
+  <span id="statusText">就绪 · 编辑后自动转换</span>
+  <span class="hint">复制后粘贴到公众号后台编辑器即可（内联 style，不依赖外部 CSS）</span>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

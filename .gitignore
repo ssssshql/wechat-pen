@@ -1,0 +1,34 @@
+# Binaries
+wechat-pen.exe
+md2html.exe
+*.exe
+
+# Go build artifacts
+/server/spa/
+
+# Frontend
+/web/node_modules/
+/web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (contains secrets)
+.wechat-pen.json
+
+# Materials/downloads
+/materials/
+
+# Chrome debug profile
+.md2html-chrome-profile/
+.wechat-pen-chrome-profile/
+
+# Logs
+*.log
