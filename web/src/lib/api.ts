@@ -186,3 +186,39 @@ export async function addDraft(req: {
   if (!res.ok) throw new Error(data.error || res.statusText)
   return data as { media_id: string }
 }
+
+export interface BizItem {
+  fakeid: string
+  nickname: string
+  alias: string
+  round_head_img: string
+  service_type: number
+  signature: string
+  verify_status: number
+}
+
+export async function searchBiz(query: string, begin = 0, count = 10): Promise<{ list: BizItem[]; total: number }> {
+  const params = new URLSearchParams({ query, begin: String(begin), count: String(count) })
+  const res = await fetch(`/api/biz/search?${params}`)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data as { list: BizItem[]; total: number }
+}
+
+export interface PublishedArticle {
+  title: string
+  link: string
+  cover: string
+  digest: string
+  create_time: number
+  update_time: number
+  appmsg_id: number
+}
+
+export async function fetchBizArticles(fakeid: string, begin = 0, count = 10): Promise<{ total: number; articles: PublishedArticle[] }> {
+  const params = new URLSearchParams({ fakeid, begin: String(begin), count: String(count) })
+  const res = await fetch(`/api/biz/articles?${params}`)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data as { total: number; articles: PublishedArticle[] }
+}

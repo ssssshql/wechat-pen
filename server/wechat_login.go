@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -220,8 +219,32 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 		cancel:  make(chan struct{}),
 	}
 
-	// Start network monitor AFTER login (not during, it breaks QR code loading)
-	// It will be enabled in pollLogin when login succeeds
+	// Enable CDP Network early — BEFORE login — so we capture the first post-login API calls
+	// that contain token+fingerprint in URL. Network.enable is a passive observer.
+	_ = proto.NetworkEnable{}.Call(bs.page)
+
+	// Start listening for network events — capture token+fingerprint from URL params
+	go bs.page.EachEvent(func(e *proto.NetworkRequestWillBeSent) {
+		rawURL := e.Request.URL
+		if !strings.Contains(rawURL, "token=") && !strings.Contains(rawURL, "fingerprint=") {
+			return
+		}
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return
+		}
+		bs.mu.Lock()
+		if bs.authParams == nil {
+			bs.authParams = make(map[string]string)
+		}
+		if token := u.Query().Get("token"); token != "" {
+			bs.authParams["token"] = token
+		}
+		if fp := u.Query().Get("fingerprint"); fp != "" {
+			bs.authParams["fingerprint"] = fp
+		}
+		bs.mu.Unlock()
+	})()
 
 	// Record the initial login URL so we can detect change
 	initialURL := ""
@@ -291,27 +314,13 @@ func pollLogin(bs *browserSession, initialURL string) {
 
 						storeCookie(cookieStr)
 
-						// Start passive network monitor
-						go startNetworkMonitor(bs)
-
-						// Navigate to article page to trigger token-rich URLs
-						go func() {
-							time.Sleep(2 * time.Second)
-							_ = bs.page.Navigate("https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&lang=zh_CN&type=77")
-						}()
-
-						// Now safe to enable network monitoring
-						go startNetworkMonitor(bs)
-
-						// Navigate to article management to trigger token-rich requests
-						go func() {
-							time.Sleep(1 * time.Second)
-							bs.page.MustNavigate("https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&lang=zh_CN&type=77")
-						}()
-
 						bs.mu.Lock()
 						bs.cookies = cookieStr
 						bs.mu.Unlock()
+
+						// Extract token/fingerprint from the page URL after navigation.
+						// No JS injection, no CDP Network domain — zero detection surface.
+						go extractAuthParams(bs)
 					}
 					return
 				}
@@ -331,6 +340,20 @@ func handleLoginStatus(w http.ResponseWriter, r *http.Request) {
 	loginSession.mu.Unlock()
 
 	if bs == nil {
+		// Browser session ended, but we may have persisted cookie/token/fingerprint
+		if cookie := GetLoginCookie(); cookie != "" {
+			currentCredsMu.RLock()
+			resp := map[string]any{"status": "ok", "cookies": cookie}
+			if currentCreds.Token != "" {
+				resp["token"] = currentCreds.Token
+			}
+			if currentCreds.Fingerprint != "" {
+				resp["fingerprint"] = currentCreds.Fingerprint
+			}
+			currentCredsMu.RUnlock()
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "none"})
 		return
 	}
@@ -339,7 +362,16 @@ func handleLoginStatus(w http.ResponseWriter, r *http.Request) {
 	defer bs.mu.Unlock()
 
 	if bs.loggedIn {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "cookies": bs.cookies})
+		resp := map[string]any{"status": "ok", "cookies": bs.cookies}
+		if bs.authParams != nil {
+			if t, ok := bs.authParams["token"]; ok {
+				resp["token"] = t
+			}
+			if fp, ok := bs.authParams["fingerprint"]; ok {
+				resp["fingerprint"] = fp
+			}
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	if bs.err != "" {
@@ -366,10 +398,14 @@ func handleLoginLogout(w http.ResponseWriter, r *http.Request) {
 
 	currentCredsMu.Lock()
 	currentCreds.LoginCookie = ""
+	currentCreds.Token = ""
+	currentCreds.Fingerprint = ""
 	currentCredsMu.Unlock()
 
 	cfg, _ := loadConfigFile()
 	cfg.LoginCookie = ""
+	cfg.Token = ""
+	cfg.Fingerprint = ""
 	saveConfigFile(cfg)
 
 	fmt.Println("login: logout complete")
@@ -407,93 +443,42 @@ func storeCookie(cookieStr string) {
 	fmt.Printf("login: cookie stored (%d chars)\n", len(cookieStr))
 }
 
-func captureFromCookies(bs *browserSession, cookies []*proto.NetworkCookie) {
-	fmt.Printf("capture: scanning %d cookies\n", len(cookies))
-	for _, c := range cookies {
-		name := strings.ToLower(c.Name)
-		fmt.Printf("capture: cookie '%s' = %s\n", name, truncateStr(c.Value, 50))
-		if name == "token" || name == "fingerprint" || name == "uin" || name == "key" || strings.Contains(name, "token") || strings.Contains(name, "finger") {
+// extractAuthParams saves token/fingerprint and persists to config.
+func extractAuthParams(bs *browserSession) {
+	// Read token from page URL if not yet captured from network events
+	if info, err := bs.page.Info(); err == nil {
+		if u, _ := url.Parse(info.URL); u != nil {
 			bs.mu.Lock()
-			bs.authParams["cookie_"+name] = c.Value
+			if bs.authParams == nil {
+				bs.authParams = make(map[string]string)
+			}
+			if token := u.Query().Get("token"); token != "" && bs.authParams["token"] == "" {
+				bs.authParams["token"] = token
+			}
+			if fp := u.Query().Get("fingerprint"); fp != "" && bs.authParams["fingerprint"] == "" {
+				bs.authParams["fingerprint"] = fp
+			}
 			bs.mu.Unlock()
-			fmt.Printf("capture: extracted cookie %s=%s\n", name, truncateStr(c.Value, 30))
-		}
-	}
-}
-
-// startNetworkMonitor passively captures token/fingerprint from URL params.
-func startNetworkMonitor(bs *browserSession) {
-	bs.authParams = make(map[string]string)
-	browser := bs.browser
-
-	// Scan cookies first
-	cookies, err := browser.GetCookies()
-	if err == nil {
-		for _, c := range cookies {
-			name := strings.ToLower(c.Name)
-			val := c.Value
-			if name == "token" || name == "fingerprint" || name == "uin" || name == "key" {
-				bs.authParams["cookie_"+name] = val
-				fmt.Printf("capture: from cookie %s=%s\n", name, truncateStr(val, 30))
-			}
 		}
 	}
 
-	// Inject JS to intercept XHR/fetch and report URLs with token+fingerprint
-	go func() {
-		time.Sleep(2 * time.Second) // wait for page to settle
-		_, err := bs.page.Eval(`() => {
-			const origFetch = window.fetch;
-			window.fetch = function(...args) {
-				const url = typeof args[0] === 'string' ? args[0] : args[0].url;
-				if (url.includes('token=') || url.includes('fingerprint=')) {
-					console.log('__CAPTURE__' + url);
-				}
-				return origFetch.apply(this, args);
-			};
-			const origOpen = XMLHttpRequest.prototype.open;
-			XMLHttpRequest.prototype.open = function(method, url) {
-				if (url.includes('token=') || url.includes('fingerprint=')) {
-					console.log('__CAPTURE__' + url);
-				}
-				return origOpen.apply(this, arguments);
-			};
-		}`)
-		if err != nil {
-			fmt.Printf("capture: JS injection failed: %v\n", err)
-			return
-		}
-		fmt.Println("capture: JS injection done, listening for console")
+	bs.mu.Lock()
+	token := bs.authParams["token"]
+	fp := bs.authParams["fingerprint"]
+	bs.mu.Unlock()
 
-		// Listen for console messages with captured URLs
-		// Enable Runtime domain for console events
-		bs.page.Call(context.Background(), "Runtime.enable", `{}`, nil)
-		go bs.page.EachEvent(func(e *proto.RuntimeConsoleAPICalled) {
-			for _, arg := range e.Args {
-				v := arg.Value.Str()
-				if strings.Contains(v, "__CAPTURE__") {
-					prefix := "__CAPTURE__"
-					idx := strings.Index(v, prefix)
-					urlStr := v[idx+len(prefix):]
-					fmt.Printf("capture: JS intercepted %s\n", truncateStr(urlStr, 150))
-					if u, err := url.Parse(urlStr); err == nil {
-						if token := u.Query().Get("token"); token != "" {
-							bs.mu.Lock()
-							bs.authParams["token"] = token
-							bs.mu.Unlock()
-							fmt.Printf("capture: token=%s\n", token)
-						}
-						if fp := u.Query().Get("fingerprint"); fp != "" {
-							bs.mu.Lock()
-							bs.authParams["fingerprint"] = fp
-							bs.mu.Unlock()
-							fmt.Printf("capture: fingerprint=%s\n", fp)
-						}
-					}
-				}
-			}
-		})()
-	}()
+	// Persist to in-memory creds and config file
+	currentCredsMu.Lock()
+	currentCreds.Token = token
+	currentCreds.Fingerprint = fp
+	currentCredsMu.Unlock()
+
+	cfg, _ := loadConfigFile()
+	cfg.Token = token
+	cfg.Fingerprint = fp
+	saveConfigFile(cfg)
+
+	fmt.Printf("login: captured token=%s fingerprint=%s (persisted)\n", token, fp)
 }
 
 // PublishDraftWithCookie publishes a draft using the stored login cookie.

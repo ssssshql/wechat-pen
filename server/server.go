@@ -29,6 +29,8 @@ var currentCreds = struct {
 	AppID       string `json:"appid"`
 	Secret      string `json:"secret"`
 	LoginCookie string `json:"login_cookie"`
+	Token       string `json:"token"`
+	Fingerprint string `json:"fingerprint"`
 }{}
 
 // GetCredentials returns a snapshot of current credentials (thread-safe).
@@ -59,6 +61,12 @@ func LoadCredsFromEnv() {
 		if currentCreds.LoginCookie == "" {
 			currentCreds.LoginCookie = cfg.LoginCookie
 		}
+		if currentCreds.Token == "" {
+			currentCreds.Token = cfg.Token
+		}
+		if currentCreds.Fingerprint == "" {
+			currentCreds.Fingerprint = cfg.Fingerprint
+		}
 	}
 }
 
@@ -66,6 +74,8 @@ type configFile struct {
 	AppID       string `json:"appid"`
 	Secret      string `json:"secret"`
 	LoginCookie string `json:"login_cookie"`
+	Token       string `json:"token,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 func configPath() string {
@@ -130,6 +140,10 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/material/delete", handleMaterialDelete)
 	mux.HandleFunc("/api/material/upload", handleMaterialUpload)
 	mux.HandleFunc("/api/draft/add", handleDraftAdd)
+	mux.HandleFunc("/api/biz/search", handleSearchBiz)
+	mux.HandleFunc("/api/biz/articles", handleBizArticles)
+	mux.HandleFunc("/api/biz/article/proxy", handleArticleProxy)
+	mux.HandleFunc("/api/biz/image/proxy", handleImageProxy)
 	mux.HandleFunc("/api/login/start", handleLoginStart)
 	mux.HandleFunc("/api/login/status", handleLoginStatus)
 	mux.HandleFunc("/api/login/cancel", handleLoginCancel)

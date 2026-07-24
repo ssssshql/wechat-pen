@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, History, Loader2, Menu, Plus, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, History, Loader2, Menu, Plus, Rss, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import EditorToolbar from '@/components/EditorToolbar.vue'
 import MaterialBrowser from '@/components/MaterialBrowser.vue'
+import MpBrowser from '@/components/MpBrowser.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import PreviewPanel from '@/components/PreviewPanel.vue'
 import { convertMarkdown, downloadText, importTheme, getActiveDraftId, loadDrafts, loadSettings, newDraftId, openMpGuide, pushHistory, saveDrafts, saveSettings, setActiveDraftId, addDraft, fetchMaterials, uploadMaterial } from '@/lib/api'
@@ -24,8 +25,6 @@ const highlightTheme = ref<HighlightTheme>('github')
 const toc = ref(false)
 const footer = ref(false)
 const imageCaption = ref(true)
-const appID = ref('')
-const appSecret = ref('')
 const paragraphGap = ref('1em')
 const fontSizePx = ref([16])
 const lineHeight = ref([1.75])
@@ -39,6 +38,7 @@ const copyMode = ref<'rich' | 'source'>('rich')
 const editorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
 const mobileSettings = ref(false)
 const showMaterials = ref(false)
+const showMp = ref(false)
 const showDraftDialog = ref(false)
 const draftAuthor = ref('')
 const draftDigest = ref('')
@@ -231,6 +231,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
           <input ref="batchInput" type="file" accept=".md,.markdown,.txt" multiple class="hidden" @change="onBatchFiles" />
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="batchInput?.click()"><Download class="size-3.5 mr-1" />批量</Button>
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showMaterials = !showMaterials"><Image class="size-3.5 mr-1" />素材</Button>
+          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showMp = !showMp"><Rss class="size-3.5 mr-1" />公众号</Button>
           <span class="mx-1.5 hidden w-px self-stretch bg-border sm:inline" />
           <Button variant="ghost" size="xs" @click="downloadHTML"><Download class="size-3.5 mr-1" />下载</Button>
           <Button size="xs" @click="copyHTML"><Copy class="size-3.5 mr-1" />复制</Button>
@@ -259,7 +260,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
     <!-- Main -->
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <aside class="scroll-panel hidden w-[224px] shrink-0 overflow-y-auto border-r bg-white/60 lg:block">
-        <SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:title="title" v-model:text-indent="textIndent" v-model:justify="justify" v-model:paragraph-gap="paragraphGap" v-model:font-size-px="fontSizePx" v-model:line-height="lineHeight" v-model:highlight="highlight" v-model:highlight-theme="highlightTheme" v-model:toc="toc" v-model:footer="footer" v-model:image-caption="imageCaption" v-model:app-id="appID" v-model:app-secret="appSecret" @style-change="onStyleChange" @insert="insertSnippet" />
+        <SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:title="title" v-model:text-indent="textIndent" v-model:justify="justify" v-model:paragraph-gap="paragraphGap" v-model:font-size-px="fontSizePx" v-model:line-height="lineHeight" v-model:highlight="highlight" v-model:highlight-theme="highlightTheme" v-model:toc="toc" v-model:footer="footer" v-model:image-caption="imageCaption" @style-change="onStyleChange" @insert="insertSnippet" />
       </aside>
 
       <section class="editor-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r">
@@ -399,6 +400,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
           />
         </div>
       </div>
+    </Teleport>
+
+    <!-- MP browser (Teleport) -->
+    <Teleport to="body">
+      <MpBrowser v-if="showMp" @close="showMp = false" />
     </Teleport>
 
     <footer class="app-footer flex h-7 shrink-0 items-center gap-2 px-3 text-[11px]">
