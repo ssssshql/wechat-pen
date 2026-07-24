@@ -148,6 +148,8 @@ func runWhitelistAutomation() {
 	cancelCh := currentWhitelist.cancelCh
 	currentWhitelist.mu.Unlock()
 
+	targetURL := fmt.Sprintf("https://developers.weixin.qq.com/console/product/mp/%s", appID)
+
 	// Launch Chrome with separate whitelist profile
 	profileDir := whitelistProfileDir()
 	os.MkdirAll(profileDir, 0o700)
@@ -191,7 +193,7 @@ func runWhitelistAutomation() {
 		currentWhitelist.mu.Unlock()
 	}()
 
-	targetURL := fmt.Sprintf("https://developers.weixin.qq.com/console/product/mp/%s", appID)
+	// Open target URL — will redirect to /platform/login?redirect=... if not logged in
 	page, err := browser.Page(proto.TargetCreateTarget{URL: targetURL})
 	if err != nil {
 		setWhitelistError("打开页面失败: " + err.Error())
@@ -206,14 +208,13 @@ func runWhitelistAutomation() {
 	currentWhitelist.page = page
 	currentWhitelist.mu.Unlock()
 
-	// Wait for page to render
 	time.Sleep(3 * time.Second)
 
 	if cancelled(cancelCh) {
 		return
 	}
 
-	// Detect initial state
+	// Detect initial state — login page shows QR code, redirect target may show whitelist directly
 	state := detectPageState(page)
 	if state == "qrcode" {
 		qr := extractQRCodeFromPage(page)
@@ -226,16 +227,28 @@ func runWhitelistAutomation() {
 		currentWhitelist.Flow = "login"
 		currentWhitelist.mu.Unlock()
 
-		if !waitQRCodeGone(page, 180*time.Second, cancelCh) {
+		// Wait for user to scan QR — detect when URL changes away from /platform/login
+		if !waitForLoginRedirect(page, 180*time.Second, cancelCh) {
 			return
 		}
-		// Re-check after QR disappears
-		time.Sleep(2 * time.Second)
+
+		if cancelled(cancelCh) {
+			return
+		}
+
+		// Page navigated back to target URL — wait for it to fully load
+		time.Sleep(3 * time.Second)
 		state = detectPageState(page)
 	}
 
 	if state != "whitelist" {
-		setWhitelistError("登录后未能自动跳转到 IP 白名单页面")
+		// Try waiting a bit more — page might still be rendering
+		time.Sleep(3 * time.Second)
+		state = detectPageState(page)
+	}
+
+	if state != "whitelist" {
+		setWhitelistError("登录后未能自动跳转到 IP 白名单页面，请确认 AppID 正确")
 		return
 	}
 
@@ -299,6 +312,26 @@ func cancelled(ch chan struct{}) bool {
 	default:
 		return false
 	}
+}
+
+// waitForLoginRedirect waits until the page navigates away from the login URL,
+// which means the user scanned the QR code and logged in.
+func waitForLoginRedirect(page *rod.Page, timeout time.Duration, cancelCh chan struct{}) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cancelled(cancelCh) {
+			return false
+		}
+		time.Sleep(1 * time.Second)
+		info, err := page.Info()
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(info.URL, "/platform/login") {
+			return true
+		}
+	}
+	return false
 }
 
 func waitQRCodeGone(page *rod.Page, timeout time.Duration, cancelCh chan struct{}) bool {
