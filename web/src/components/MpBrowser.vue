@@ -24,21 +24,65 @@ async function fetchAccountInfo() {
   } catch {}
 }
 
-// --- Credentials ---
+// --- Credentials / call mode ---
 const appID = ref('')
 const appSecret = ref('')
+const callMode = ref<'local' | 'proxy'>('local')
+const proxyBaseURL = ref('')
+const proxyAPIKey = ref('')
+const testingProxy = ref(false)
 const checkingIP = ref(false)
 const checkedRealIP = ref('')
 const showCreds = ref(false)
 
 async function fetchCreds() {
-  try { const res = await fetch('/api/credentials'); const d = await res.json(); if (d.appid) appID.value = d.appid; if (d.secret) appSecret.value = d.secret } catch {}
+  try {
+    const res = await fetch('/api/credentials')
+    const d = await res.json()
+    if (d.appid) appID.value = d.appid
+    if (d.secret) appSecret.value = d.secret
+    if (d.mode === 'proxy' || d.mode === 'local') callMode.value = d.mode
+    if (d.proxy_base_url) proxyBaseURL.value = d.proxy_base_url
+    if (d.proxy_api_key) proxyAPIKey.value = d.proxy_api_key
+  } catch {}
 }
 async function onSaveCreds() {
   try {
-    const res = await fetch('/api/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appid: appID.value, secret: appSecret.value }) })
-    const d = await res.json(); if (res.ok) toast.success('凭据已保存'); else toast.error(d.error || '保存失败')
+    const body: Record<string, string> = {
+      mode: callMode.value,
+      proxy_base_url: proxyBaseURL.value,
+      proxy_api_key: proxyAPIKey.value,
+    }
+    if (callMode.value === 'local') {
+      body.appid = appID.value
+      body.secret = appSecret.value
+    }
+    const res = await fetch('/api/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const d = await res.json()
+    if (res.ok) toast.success(callMode.value === 'proxy' ? '已切换为远程代理' : '凭据已保存')
+    else toast.error(d.error || '保存失败')
   } catch { toast.error('保存失败') }
+}
+async function testProxy() {
+  testingProxy.value = true
+  try {
+    const res = await fetch('/api/proxy/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proxy_base_url: proxyBaseURL.value, proxy_api_key: proxyAPIKey.value }),
+    })
+    const d = await res.json()
+    if (res.ok) toast.success('代理连接正常')
+    else toast.error(d.error || '连接失败')
+  } catch (e) {
+    toast.error('连接失败: ' + (e instanceof Error ? e.message : String(e)))
+  } finally {
+    testingProxy.value = false
+  }
 }
 async function checkIP() {
   checkingIP.value = true; checkedRealIP.value = ''
@@ -304,30 +348,57 @@ onBeforeUnmount(() => { if (loginEventSource) loginEventSource.close(); if (wlEv
             </Tooltip>
           </button>
           <div v-if="showCreds" class="space-y-2 pl-4.5">
-            <Input v-model="appID" placeholder="AppID" class="h-7 text-[11px]" />
-            <input v-model="appSecret" placeholder="AppSecret" type="password" class="h-7 text-[11px] w-full rounded-md border bg-transparent px-2.5 outline-none focus:ring-1 focus:ring-ring" />
-            <Button size="xs" variant="outline" class="w-full text-[11px] h-7 rounded-lg" @click="onSaveCreds">保存凭据</Button>
-            <!-- Whitelist check -->
-            <div class="rounded-md bg-accent/40 px-2.5 py-2 space-y-1.5">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-1.5">
-                  <ShieldCheck class="size-3 text-muted-foreground" />
-                  <span class="text-[10px] font-medium">白名单检测</span>
-                  <Tooltip>
-                    <TooltipTrigger as-child><Info class="size-3 text-muted-foreground/60 cursor-help" /></TooltipTrigger>
-                    <TooltipContent side="top" class="max-w-52 text-[10px] z-[100001]"><p>凭证涉及的功能都需要在白名单范围内才可调用。</p></TooltipContent>
-                  </Tooltip>
-                </div>
-                <Button size="xs" variant="outline" class="h-5 text-[10px] rounded" :disabled="checkingIP" @click="checkIP">
-                  <Loader2 v-if="checkingIP" class="size-3 animate-spin" />
-                  <span v-else>检测</span>
-                </Button>
-              </div>
-              <div v-if="checkedRealIP" class="rounded bg-yellow-50 border border-yellow-200 px-2 py-1.5 space-y-1.5">
-                <p class="text-[10px] text-yellow-700">当前 IP <span class="font-mono font-medium">{{ checkedRealIP }}</span> 未在白名单中</p>
-                <Button size="xs" variant="outline" class="h-5 text-[10px] rounded" @click="onStartWhitelist(checkedRealIP)">添加到白名单</Button>
-              </div>
+            <div class="flex rounded-lg border p-0.5 gap-0.5">
+              <button
+                class="flex-1 h-6 rounded-md text-[10px] font-medium transition-colors"
+                :class="callMode === 'local' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'"
+                @click="callMode = 'local'"
+              >本机直连</button>
+              <button
+                class="flex-1 h-6 rounded-md text-[10px] font-medium transition-colors"
+                :class="callMode === 'proxy' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'"
+                @click="callMode = 'proxy'"
+              >远程代理</button>
             </div>
+
+            <template v-if="callMode === 'local'">
+              <Input v-model="appID" placeholder="AppID" class="h-7 text-[11px]" />
+              <input v-model="appSecret" placeholder="AppSecret" type="password" class="h-7 text-[11px] w-full rounded-md border bg-transparent px-2.5 outline-none focus:ring-1 focus:ring-ring" />
+              <Button size="xs" variant="outline" class="w-full text-[11px] h-7 rounded-lg" @click="onSaveCreds">保存凭据</Button>
+              <div class="rounded-md bg-accent/40 px-2.5 py-2 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-1.5">
+                    <ShieldCheck class="size-3 text-muted-foreground" />
+                    <span class="text-[10px] font-medium">白名单检测</span>
+                    <Tooltip>
+                      <TooltipTrigger as-child><Info class="size-3 text-muted-foreground/60 cursor-help" /></TooltipTrigger>
+                      <TooltipContent side="top" class="max-w-52 text-[10px] z-[100001]"><p>本机直连时，出口 IP 需在开放平台白名单内。</p></TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Button size="xs" variant="outline" class="h-5 text-[10px] rounded" :disabled="checkingIP" @click="checkIP">
+                    <Loader2 v-if="checkingIP" class="size-3 animate-spin" />
+                    <span v-else>检测</span>
+                  </Button>
+                </div>
+                <div v-if="checkedRealIP" class="rounded bg-yellow-50 border border-yellow-200 px-2 py-1.5 space-y-1.5">
+                  <p class="text-[10px] text-yellow-700">当前 IP <span class="font-mono font-medium">{{ checkedRealIP }}</span> 未在白名单中</p>
+                  <Button size="xs" variant="outline" class="h-5 text-[10px] rounded" @click="onStartWhitelist(checkedRealIP)">添加到白名单</Button>
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <p class="text-[10px] text-muted-foreground leading-relaxed">开放平台调用经 VPS 固定出口，AppID/Secret 只存在代理侧。本机只需代理地址与 API Key。</p>
+              <Input v-model="proxyBaseURL" placeholder="https://proxy.example.com" class="h-7 text-[11px]" />
+              <input v-model="proxyAPIKey" placeholder="API Key" type="password" class="h-7 text-[11px] w-full rounded-md border bg-transparent px-2.5 outline-none focus:ring-1 focus:ring-ring" />
+              <div class="flex gap-1.5">
+                <Button size="xs" variant="outline" class="flex-1 text-[11px] h-7 rounded-lg" :disabled="testingProxy" @click="testProxy">
+                  <Loader2 v-if="testingProxy" class="size-3 mr-1 animate-spin" />
+                  测试连接
+                </Button>
+                <Button size="xs" variant="outline" class="flex-1 text-[11px] h-7 rounded-lg" @click="onSaveCreds">保存并启用</Button>
+              </div>
+            </template>
           </div>
         </div>
       </div>

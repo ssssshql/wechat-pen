@@ -3,14 +3,13 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	"wechat-pen/converter"
 )
 
-const wechatDraftAddURL = "https://api.weixin.qq.com/cgi-bin/draft/add"
+const cgiDraftAdd = "/cgi-bin/draft/add"
 
 type draftArticle struct {
 	Title              string `json:"title"`
@@ -43,14 +42,14 @@ func handleDraftAdd(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var req struct {
-		Markdown      string `json:"markdown"`
-		Title         string `json:"title"`
-		Author        string `json:"author"`
-		Digest        string `json:"digest"`
-		ThumbMediaID  string `json:"thumb_media_id"`
-		Style         string `json:"style"`
-		PrimaryColor  string `json:"primaryColor"`
-		UploadImages  bool   `json:"upload_images"`
+		Markdown     string `json:"markdown"`
+		Title        string `json:"title"`
+		Author       string `json:"author"`
+		Digest       string `json:"digest"`
+		ThumbMediaID string `json:"thumb_media_id"`
+		Style        string `json:"style"`
+		PrimaryColor string `json:"primaryColor"`
+		UploadImages bool   `json:"upload_images"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -69,7 +68,6 @@ func handleDraftAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert markdown to WeChat-compatible HTML
 	style := converter.StylePack(strings.ToLower(strings.TrimSpace(req.Style)))
 	if style == "" {
 		style = converter.StyleSimple
@@ -90,9 +88,6 @@ func handleDraftAdd(w http.ResponseWriter, r *http.Request) {
 
 	content := string(result.HTML)
 
-	// Upload content images to WeChat:
-	//   upload_images=true  → uploadimg (≤1MB auto-compress, no quota)
-	//   upload_images=false → add_material (permanent material, no size limit)
 	processed, err := processContentImages(content, req.UploadImages)
 	if err != nil {
 		fmt.Printf("draft/add: upload images failed: %v\n", err)
@@ -100,7 +95,6 @@ func handleDraftAdd(w http.ResponseWriter, r *http.Request) {
 		content = processed
 	}
 
-	// Build draft API request
 	draftReq := draftAddReq{
 		Articles: []draftArticle{{
 			Title:        req.Title,
@@ -111,30 +105,15 @@ func handleDraftAdd(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 
-	body, _ := json.Marshal(draftReq)
-
 	var draftResp draftAddResp
-	err = WithWeChatToken(func(token string) error {
-		url := wechatDraftAddURL + "?access_token=" + token
-		resp_, err := http.Post(url, "application/json", strings.NewReader(string(body)))
-		if err != nil {
-			return fmt.Errorf("request draft/add: %w", err)
-		}
-		defer resp_.Body.Close()
-		respBody, _ := io.ReadAll(resp_.Body)
-		if err := json.Unmarshal(respBody, &draftResp); err != nil {
-			return fmt.Errorf("parse draft/add: %w", err)
-		}
-		return nil
-	})
+	err = wechatPostJSON(cgiDraftAdd, draftReq, &draftResp)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	if draftResp.ErrCode != 0 {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error":   draftResp.ErrMsg,
-			"errcode": draftResp.ErrCode,
+			"error": draftResp.ErrMsg, "errcode": draftResp.ErrCode,
 		})
 		return
 	}

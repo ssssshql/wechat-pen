@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, History, Loader2, Menu, Plus, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, Loader2, Menu, Plus, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
@@ -10,7 +10,7 @@ import MaterialBrowser from '@/components/MaterialBrowser.vue'
 import MpBrowser from '@/components/MpBrowser.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import PreviewPanel from '@/components/PreviewPanel.vue'
-import { convertMarkdown, downloadText, importTheme, getActiveDraftId, loadDrafts, loadSettings, newDraftId, openMpGuide, pushHistory, saveDrafts, saveSettings, setActiveDraftId, addDraft, fetchMaterials, uploadMaterial } from '@/lib/api'
+import { convertMarkdown, downloadText, importTheme, loadSettings, openMpGuide, saveSettings, addDraft, fetchMaterials, uploadMaterial, fetchNotes, createNote, updateNote, deleteNote, setActiveNote, migrateLocalDraftsIfNeeded } from '@/lib/api'
 import { SAMPLE_MD, STYLE_PRESETS, computeStats, type DraftItem, type HighlightTheme, type MaterialItem, type PreviewShell, type PreviewWidth, type StylePack, type Theme } from '@/lib/types'
 
 const markdown = ref(SAMPLE_MD)
@@ -116,18 +116,26 @@ function draftPickerNext() {
   loadDraftMaterials()
 }
 const showDrafts = ref(false)
-const showHistory = ref(false)
 const drafts = ref<DraftItem[]>([])
 const activeDraftId = ref<string | null>(null)
-const batchInput = ref<HTMLInputElement | null>(null)
 const themeInput = ref<HTMLInputElement | null>(null)
+const renamingId = ref<string | null>(null)
+const renameDraft = ref('')
 
 let timer: ReturnType<typeof setTimeout> | null = null
 let draftTimer: ReturnType<typeof setTimeout> | null = null
 
 const stats = computed(() => computeStats(markdown.value, title.value))
 const styleLabel = computed(() => STYLE_PRESETS.find((s) => s.value === style.value)?.label ?? style.value)
-const activeHistory = computed(() => { const d = drafts.value.find((x) => x.id === activeDraftId.value); return d?.history || [] })
+
+function formatNoteTime(ts: number) {
+  const d = new Date(ts)
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const y = now.getFullYear() === d.getFullYear()
+  return d.toLocaleDateString([], y ? { month: 'numeric', day: 'numeric' } : { year: 'numeric', month: 'numeric', day: 'numeric' })
+}
 
 function buildReq() {
   return {
@@ -157,8 +165,21 @@ function currentSettings() { return { theme: theme.value, style: style.value, ti
 function applySettings(s: Record<string, unknown>) { if (s.theme) theme.value = s.theme as Theme; if (s.style) style.value = s.style as StylePack; if (typeof s.title === 'string') title.value = s.title; if (typeof s.primaryColor === 'string') primaryColor.value = s.primaryColor; if (typeof s.textIndent === 'boolean') textIndent.value = s.textIndent; if (typeof s.justify === 'boolean') justify.value = s.justify; if (s.highlightTheme) highlightTheme.value = s.highlightTheme as HighlightTheme; if (s.copyMode === 'rich' || s.copyMode === 'source') copyMode.value = s.copyMode }
 
 function loadSample() { markdown.value = SAMPLE_MD; schedule(); toast.message('已载入示例') }
-function insertSnippet(text: string) { editorRef.value?.insertAtCursor(text); schedule(); mobileSettings.value = false }
-function onToolbar(action: string) { editorRef.value?.runToolbar(action); schedule() }
+function insertSnippet(text: string) {
+  const ed = editorRef.value
+  if (ed?.insertAtCursor) {
+    ed.insertAtCursor(text)
+  } else {
+    markdown.value = `${markdown.value || ''}${text}`
+  }
+  schedule()
+  mobileSettings.value = false
+}
+function onToolbar(action: string) {
+  const ed = editorRef.value
+  if (ed?.runToolbar) ed.runToolbar(action)
+  schedule()
+}
 function downloadHTML() { if (!html.value) { toast.error('无内容'); return }; downloadText(`${(title.value || 'article').replace(/[\\/:*?"<>|]/g, '_')}.html`, html.value); toast.success('已下载') }
 
 async function copyHTML() {
@@ -195,24 +216,174 @@ async function publishDraft() {
   }
 }
 
-function persistActiveDraft() {
-  if (!activeDraftId.value) { const id = newDraftId(); activeDraftId.value = id; setActiveDraftId(id); drafts.value = [{ id, name: title.value || '未命名', markdown: markdown.value, updatedAt: Date.now(), settings: { style: style.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlightTheme: highlightTheme.value }, history: [] }, ...drafts.value]; saveDrafts(drafts.value); return }
-  const idx = drafts.value.findIndex((d) => d.id === activeDraftId.value)
-  if (idx >= 0) { let d: DraftItem = { ...drafts.value[idx], name: title.value || drafts.value[idx].name, markdown: markdown.value, updatedAt: Date.now() }; d = pushHistory(d, markdown.value, title.value); drafts.value[idx] = d; saveDrafts(drafts.value) }
+function noteSettings() {
+  return { style: style.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlightTheme: highlightTheme.value }
 }
 
-function selectDraft(id: string) { const d = drafts.value.find((x) => x.id === id); if (!d) return; activeDraftId.value = id; setActiveDraftId(id); markdown.value = d.markdown; if (d.settings) applySettings(d.settings as Record<string, unknown>); showDrafts.value = false; showHistory.value = false; schedule() }
-function restoreSnapshot(snapId: string) { const d = drafts.value.find((x) => x.id === activeDraftId.value); const snap = d?.history?.find((h) => h.id === snapId); if (!snap) return; markdown.value = snap.markdown; if (snap.title) title.value = snap.title; showHistory.value = false; schedule(); toast.message('已恢复') }
-function createDraft() { persistActiveDraft(); const id = newDraftId(); drafts.value = [{ id, name: `草稿 ${drafts.value.length + 1}`, markdown: '# 新文章\n\n', updatedAt: Date.now(), history: [] }, ...drafts.value]; saveDrafts(drafts.value); selectDraft(id); toast.message('新建草稿') }
-function deleteDraft(id: string) { drafts.value = drafts.value.filter((d) => d.id !== id); saveDrafts(drafts.value); if (activeDraftId.value === id) { if (drafts.value[0]) selectDraft(drafts.value[0].id); else { activeDraftId.value = null; setActiveDraftId(null); markdown.value = SAMPLE_MD } }; toast.message('已删除') }
+async function persistActiveDraft() {
+  try {
+    if (!activeDraftId.value) {
+      const n = await createNote({
+        name: title.value || '未命名',
+        markdown: markdown.value,
+        settings: noteSettings(),
+      })
+      activeDraftId.value = n.id
+      drafts.value = [n, ...drafts.value]
+      await setActiveNote(n.id)
+      return
+    }
+    const n = await updateNote(activeDraftId.value, {
+      name: title.value || drafts.value.find((d) => d.id === activeDraftId.value)?.name || '未命名',
+      markdown: markdown.value,
+      settings: noteSettings(),
+      pushHistory: false,
+    })
+    const idx = drafts.value.findIndex((d) => d.id === n.id)
+    if (idx >= 0) drafts.value[idx] = n
+    else drafts.value = [n, ...drafts.value]
+  } catch (e) {
+    console.error('save note failed', e)
+  }
+}
+
+async function selectDraft(id: string) {
+  if (renamingId.value && renamingId.value !== id) await commitRename()
+  const d = drafts.value.find((x) => x.id === id)
+  if (!d) return
+  if (activeDraftId.value && activeDraftId.value !== id) {
+    try {
+      await updateNote(activeDraftId.value, {
+        name: title.value || drafts.value.find((x) => x.id === activeDraftId.value)?.name || '未命名',
+        markdown: markdown.value,
+        settings: noteSettings(),
+        pushHistory: false,
+      })
+    } catch { /* ignore */ }
+  }
+  activeDraftId.value = id
+  void setActiveNote(id)
+  markdown.value = d.markdown
+  title.value = d.name || '未命名'
+  if (d.settings) applySettings(d.settings as Record<string, unknown>)
+  showDrafts.value = false
+  schedule()
+}
+
+function startRename(id: string, e?: Event) {
+  e?.stopPropagation()
+  e?.preventDefault()
+  const d = drafts.value.find((x) => x.id === id)
+  if (!d) return
+  renamingId.value = id
+  renameDraft.value = d.name
+  void nextTick(() => {
+    const el = document.querySelector<HTMLInputElement>('input[data-note-rename]')
+    el?.focus()
+    el?.select()
+  })
+}
+
+async function commitRename() {
+  const id = renamingId.value
+  if (!id) return
+  const name = renameDraft.value.trim() || '未命名'
+  renamingId.value = null
+  const d = drafts.value.find((x) => x.id === id)
+  if (!d || d.name === name) {
+    if (d) d.name = name
+    return
+  }
+  try {
+    const updated = await updateNote(id, {
+      name,
+      markdown: id === activeDraftId.value ? markdown.value : d.markdown,
+      settings: id === activeDraftId.value ? noteSettings() : (d.settings as Record<string, unknown> | undefined),
+      pushHistory: false,
+    })
+    const idx = drafts.value.findIndex((x) => x.id === id)
+    if (idx >= 0) drafts.value[idx] = { ...drafts.value[idx], ...updated, name }
+    if (id === activeDraftId.value) title.value = name
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '重命名失败')
+  }
+}
+
+function cancelRename() {
+  renamingId.value = null
+}
+
+async function createDraft() {
+  await persistActiveDraft()
+  try {
+    const n = await createNote({
+      name: `笔记 ${drafts.value.length + 1}`,
+      markdown: '# 新文章\n\n',
+    })
+    drafts.value = [n, ...drafts.value]
+    activeDraftId.value = n.id
+    await setActiveNote(n.id)
+    markdown.value = n.markdown
+    title.value = n.name
+    showDrafts.value = false
+    schedule()
+    startRename(n.id)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : '新建失败')
+  }
+}
+
+async function deleteDraft(id: string) {
+  try {
+    await deleteNote(id)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : '删除失败')
+    return
+  }
+  drafts.value = drafts.value.filter((d) => d.id !== id)
+  if (activeDraftId.value === id) {
+    if (drafts.value[0]) {
+      await selectDraft(drafts.value[0].id)
+    } else {
+      activeDraftId.value = null
+      void setActiveNote(null)
+      markdown.value = SAMPLE_MD
+    }
+  }
+  toast.message('已删除')
+}
 async function onThemeFile(e: Event) { const input = e.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return; try { const raw = await file.text(); const pack = JSON.parse(raw); const saved = await importTheme(pack); style.value = saved.id; if (saved.primary) primaryColor.value = saved.primary; schedule(); toast.success('已导入：' + saved.name) } catch (err) { toast.error(err instanceof Error ? err.message : '导入失败') }; input.value = '' }
-async function onBatchFiles(e: Event) { const input = e.target as HTMLInputElement; const files = input.files; if (!files?.length) return; let n = 0; for (const file of Array.from(files)) { if (!/\.(md|markdown|txt)$/i.test(file.name)) continue; const text = await file.text(); try { const data = await convertMarkdown({ ...buildReq(), markdown: text, title: file.name.replace(/\.(md|markdown|txt)$/i, '') }); downloadText(file.name.replace(/\.(md|markdown|txt)$/i, '') + '.html', data.html); n++ } catch (err) { toast.error(`${file.name}: ${err instanceof Error ? err.message : '失败'}`) } }; toast.success(`已导出 ${n} 个`) }
 function wrapSelection(before: string, after: string) { editorRef.value?.wrapSelection(before, after); schedule() }
-function onKeydown(e: KeyboardEvent) { const mod = e.metaKey || e.ctrlKey; if (!mod) return; if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**') } else if (e.key === 'i') { e.preventDefault(); wrapSelection('*', '*') } else if (e.key === 'k') { e.preventDefault(); wrapSelection('[', '](https://)') } else if (e.shiftKey && e.key === 'C') { e.preventDefault(); copyHTML() } else if (e.key === 's') { e.preventDefault(); persistActiveDraft(); toast.success('已保存') } }
+function onKeydown(e: KeyboardEvent) {
+  const mod = e.metaKey || e.ctrlKey
+  if (!mod) return
+  if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**') }
+  else if (e.key === 'i') { e.preventDefault(); wrapSelection('*', '*') }
+  else if (e.key === 'k') { e.preventDefault(); wrapSelection('[', '](https://)') }
+  else if (e.shiftKey && e.key === 'C') { e.preventDefault(); copyHTML() }
+  else if (e.key === 's') { e.preventDefault(); void persistActiveDraft().then(() => toast.success('已保存')) }
+}
 
 watch([markdown, theme, style, title, primaryColor, textIndent, justify, highlightTheme], () => schedule())
 
-onMounted(() => { const settings = loadSettings(currentSettings()); applySettings(settings as Record<string, unknown>); drafts.value = loadDrafts(); const aid = getActiveDraftId(); if (aid && drafts.value.some((d) => d.id === aid)) selectDraft(aid); else if (drafts.value[0]) selectDraft(drafts.value[0].id); else runConvert(); window.addEventListener('keydown', onKeydown); checkMpStatus() })
+onMounted(async () => {
+  const settings = loadSettings(currentSettings())
+  applySettings(settings as Record<string, unknown>)
+  window.addEventListener('keydown', onKeydown)
+  checkMpStatus()
+  try {
+    const migrated = await migrateLocalDraftsIfNeeded()
+    if (migrated > 0) toast.success(`已迁移 ${migrated} 条本地笔记到服务端`)
+    const { notes, activeId } = await fetchNotes()
+    drafts.value = notes
+    const aid = activeId && notes.some((d) => d.id === activeId) ? activeId : notes[0]?.id
+    if (aid) await selectDraft(aid)
+    else runConvert()
+  } catch (e) {
+    status.value = e instanceof Error ? e.message : '加载笔记失败'
+    runConvert()
+  }
+})
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
 </script>
 
@@ -229,14 +400,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
           <div class="truncate text-sm font-semibold tracking-tight">wechat-pen</div>
         </div>
         <div class="ml-auto flex items-center gap-px">
-          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showDrafts = !showDrafts"><FolderOpen class="size-3.5 mr-1" />草稿</Button>
-          <Button variant="ghost" size="xs" class="hidden md:inline-flex" @click="showHistory = !showHistory"><History class="size-3.5 mr-1" />历史</Button>
+          <Button variant="ghost" size="xs" class="inline-flex lg:hidden" @click="showDrafts = !showDrafts"><FolderOpen class="size-3.5 mr-1" />笔记</Button>
           <span class="mx-1.5 hidden w-px self-stretch bg-border sm:inline" />
           <input ref="themeInput" type="file" accept="application/json,.json" class="hidden" @change="onThemeFile" />
           <Button variant="ghost" size="xs" class="hidden lg:inline-flex" @click="themeInput?.click()">导入主题</Button>
           <Button variant="ghost" size="xs" class="hidden md:inline-flex" @click="loadSample"><RotateCcw class="size-3.5 mr-1" />示例</Button>
-          <input ref="batchInput" type="file" accept=".md,.markdown,.txt" multiple class="hidden" @change="onBatchFiles" />
-          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="batchInput?.click()"><Download class="size-3.5 mr-1" />批量</Button>
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showMaterials = !showMaterials"><Image class="size-3.5 mr-1" />素材</Button>
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex gap-1.5" @click="showMp = !showMp" title="连接微信">
             <img v-if="mpConnected && mpAvatar" :src="mpAvatar" class="size-4 rounded-full object-cover" />
@@ -252,44 +420,99 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
         </div>
       </div>
     </header>
-
-    <!-- Drawers -->
-    <div v-if="showDrafts" class="border-border bg-background/98 absolute top-10 right-0 left-0 z-30 max-h-64 overflow-auto border-b p-2.5 shadow-lg backdrop-blur sm:left-auto sm:w-72">
-      <div class="mb-2 flex items-center justify-between"><div class="text-sm font-medium">草稿</div><div class="flex gap-1"><Button size="xs" variant="outline" @click="createDraft"><Plus class="size-3 mr-1" />新建</Button><Button size="xs" variant="ghost" @click="showDrafts = false"><X class="size-3" /></Button></div></div>
-      <div v-if="!drafts.length" class="text-muted-foreground text-xs">暂无草稿</div>
-      <div v-for="d in drafts" :key="d.id" class="hover:bg-muted flex items-center gap-1.5 rounded-md px-2 py-1">
-        <button class="min-w-0 flex-1 text-left text-xs" @click="selectDraft(d.id)"><div class="truncate font-medium" :class="d.id === activeDraftId ? 'text-primary' : ''">{{ d.name }}</div><div class="text-muted-foreground text-[10px]">{{ new Date(d.updatedAt).toLocaleString() }}</div></button>
-        <Button size="icon-xs" variant="ghost" @click="deleteDraft(d.id)"><Trash2 class="size-3" /></Button>
+    <!-- Notes drawer: only when left rail is hidden -->
+    <div v-if="showDrafts" class="absolute top-10 right-0 left-0 z-30 max-h-72 overflow-auto border-b border-[#eaeaea] bg-[#fbfbfa] p-2 shadow-sm lg:hidden">
+      <div class="mb-2 flex items-center justify-between px-1.5">
+        <span class="text-[11px] font-medium text-[#787774]">笔记</span>
+        <div class="flex gap-0.5">
+          <button type="button" class="flex size-7 items-center justify-center rounded-md text-[#787774] hover:bg-black/[0.04] hover:text-[#2f3437]" title="新建" @click="createDraft"><Plus class="size-3.5" /></button>
+          <button type="button" class="flex size-7 items-center justify-center rounded-md text-[#787774] hover:bg-black/[0.04]" @click="showDrafts = false"><X class="size-3.5" /></button>
+        </div>
       </div>
-    </div>
-
-    <div v-if="showHistory" class="border-border bg-background/98 absolute top-10 right-0 z-30 max-h-72 w-72 overflow-auto border-b border-l p-2.5 shadow-lg backdrop-blur">
-      <div class="mb-2 flex items-center justify-between"><div class="text-sm font-medium">历史版本</div><Button size="xs" variant="ghost" @click="showHistory = false"><X class="size-3" /></Button></div>
-      <div v-if="!activeHistory.length" class="text-muted-foreground text-xs">暂无快照</div>
-      <button v-for="h in activeHistory" :key="h.id" class="hover:bg-muted block w-full rounded-md px-2 py-1 text-left text-xs" @click="restoreSnapshot(h.id)"><div class="truncate">{{ (h.title || '未命名') }} · {{ h.markdown.length }} 字符</div><div class="text-muted-foreground text-[10px]">{{ new Date(h.at).toLocaleString() }}</div></button>
+      <div v-if="!drafts.length" class="px-2 py-6 text-center text-[11px] text-[#787774]">暂无笔记</div>
+      <ul class="space-y-px">
+        <li
+          v-for="d in drafts" :key="d.id"
+          class="group flex items-center gap-1 rounded-md px-2 py-1.5"
+          :class="d.id === activeDraftId ? 'bg-[#edf3ec]' : 'hover:bg-black/[0.03]'"
+        >
+          <div class="min-w-0 flex-1" @click="renamingId !== d.id && selectDraft(d.id)" @dblclick="startRename(d.id, $event)">
+            <input
+              v-if="renamingId === d.id"
+              data-note-rename
+              v-model="renameDraft"
+              class="h-6 w-full rounded border border-[#eaeaea] bg-white px-1.5 text-[12px] text-[#2f3437] outline-none focus:border-[#07c160]"
+              @click.stop
+              @keydown.enter.prevent="commitRename"
+              @keydown.esc.prevent="cancelRename"
+              @blur="commitRename"
+            />
+            <div v-else class="flex min-w-0 items-baseline justify-between gap-2">
+              <span class="truncate text-[12px] font-medium text-[#2f3437]">{{ d.name || '未命名' }}</span>
+              <span class="shrink-0 font-mono text-[10px] text-[#a0a09a]">{{ formatNoteTime(d.updatedAt) }}</span>
+            </div>
+          </div>
+          <button type="button" class="flex size-6 shrink-0 items-center justify-center rounded text-[#a0a09a] opacity-0 hover:bg-black/[0.04] hover:text-[#9f2f2d] group-hover:opacity-100" title="删除" @click.stop="deleteDraft(d.id)">
+            <Trash2 class="size-3" />
+          </button>
+        </li>
+      </ul>
     </div>
 
     <!-- Main -->
     <div class="flex min-h-0 flex-1 overflow-hidden">
-      <aside class="scroll-panel hidden w-[224px] shrink-0 overflow-y-auto border-r bg-white/60 lg:flex lg:flex-col">
-        <div class="flex h-9 shrink-0 items-center justify-between border-b px-2.5">
-          <span class="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">草稿</span>
-          <Button size="icon-xs" variant="ghost" @click="createDraft" title="新建草稿"><Plus class="size-3.5" /></Button>
-        </div>
-        <div class="flex-1 overflow-y-auto py-0.5">
-          <div v-if="!drafts.length" class="px-3 py-6 text-center text-muted-foreground text-[11px]">暂无草稿</div>
+      <!-- Notes rail: flat file-list, no card chrome -->
+      <aside class="note-rail hidden w-[200px] shrink-0 flex-col border-r border-[#eaeaea] bg-[#fbfbfa] lg:flex">
+        <div class="flex h-9 shrink-0 items-center gap-1 px-2.5">
+          <span class="min-w-0 flex-1 text-[11px] font-medium tracking-[0.04em] text-[#787774]">笔记</span>
           <button
-            v-for="d in drafts" :key="d.id"
-            class="group hover:bg-muted flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left transition-colors"
-            :class="d.id === activeDraftId ? 'bg-muted' : ''"
-            @click="selectDraft(d.id)"
+            type="button"
+            class="flex size-6 items-center justify-center rounded-md text-[#787774] transition-colors hover:bg-black/[0.05] hover:text-[#2f3437]"
+            title="新建笔记"
+            @click="createDraft"
           >
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-xs font-medium" :class="d.id === activeDraftId ? 'text-primary' : ''">{{ d.name }}</div>
-              <div class="text-muted-foreground text-[10px]">{{ new Date(d.updatedAt).toLocaleString() }}</div>
-            </div>
-            <Button size="icon-xs" variant="ghost" class="opacity-0 group-hover:opacity-100 transition-opacity shrink-0" @click.stop="deleteDraft(d.id)"><Trash2 class="size-3" /></Button>
+            <Plus class="size-3.5 stroke-[2]" />
           </button>
+        </div>
+        <div class="scroll-panel min-h-0 flex-1 px-1.5 pb-3">
+          <div v-if="!drafts.length" class="px-2 py-10 text-center text-[11px] leading-relaxed text-[#a0a09a]">
+            暂无笔记
+          </div>
+          <ul v-else class="flex flex-col gap-px">
+            <li
+              v-for="d in drafts"
+              :key="d.id"
+              class="note-item group relative flex cursor-default items-center rounded-md transition-colors"
+              :class="d.id === activeDraftId ? 'is-active' : ''"
+              @click="renamingId !== d.id && selectDraft(d.id)"
+              @dblclick="startRename(d.id, $event)"
+            >
+              <div class="min-w-0 flex-1 py-1.5 pr-6 pl-2.5">
+                <input
+                  v-if="renamingId === d.id"
+                  data-note-rename
+                  v-model="renameDraft"
+                  class="h-6 w-full rounded border border-[#eaeaea] bg-white px-1.5 text-[12px] font-medium text-[#2f3437] outline-none focus:border-[#07c160]"
+                  @click.stop
+                  @keydown.enter.prevent="commitRename"
+                  @keydown.esc.prevent="cancelRename"
+                  @blur="commitRename"
+                />
+                <template v-else>
+                  <div class="truncate text-[12.5px] leading-5 font-medium text-[#2f3437]">{{ d.name || '未命名' }}</div>
+                  <div class="mt-0.5 font-mono text-[10px] leading-none tracking-tight text-[#a0a09a] tabular-nums">{{ formatNoteTime(d.updatedAt) }}</div>
+                </template>
+              </div>
+              <button
+                type="button"
+                class="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-[#a0a09a] opacity-0 transition-opacity hover:bg-black/[0.05] hover:text-[#9f2f2d] group-hover:opacity-100"
+                title="删除"
+                @click.stop="deleteDraft(d.id)"
+              >
+                <Trash2 class="size-3" />
+              </button>
+            </li>
+          </ul>
         </div>
       </aside>
 

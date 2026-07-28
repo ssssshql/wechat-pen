@@ -2,13 +2,11 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
 	_ "image/png"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -17,8 +15,8 @@ import (
 )
 
 const (
-	wechatUploadImgURL    = "https://api.weixin.qq.com/cgi-bin/media/uploadimg"
-	wechatAddMaterialURL  = "https://api.weixin.qq.com/cgi-bin/material/add_material"
+	cgiUploadImg         = "/cgi-bin/media/uploadimg"
+	cgiAddMaterialUpload = "/cgi-bin/material/add_material"
 )
 
 const maxImageBytes = 1 << 20 // 1 MB
@@ -39,8 +37,6 @@ type addMaterialResp struct {
 }
 
 // processContentImages downloads all <img> sources, uploads to WeChat, and replaces src URLs.
-// If useUploadImg is true, uses the uploadimg API (≤1MB, auto-compress, no quota).
-// If false, uses add_material API (permanent material, no size limit).
 func processContentImages(htmlContent string, useUploadImg bool) (string, error) {
 	doc, err := html.Parse(strings.NewReader(htmlContent))
 	if err != nil {
@@ -71,11 +67,9 @@ func processContentImages(htmlContent string, useUploadImg bool) (string, error)
 			continue
 		}
 
-		var label string
+		label := "add_material"
 		if useUploadImg {
 			label = "uploadimg"
-		} else {
-			label = "add_material"
 		}
 		fmt.Printf("%s: processing %s\n", label, truncateStr(src, 80))
 
@@ -87,7 +81,6 @@ func processContentImages(htmlContent string, useUploadImg bool) (string, error)
 
 		var newURL string
 		if useUploadImg {
-			// uploadimg: compress if >1MB, then upload
 			if len(imgData) > maxImageBytes {
 				compressed, err := compressImage(imgData)
 				if err != nil {
@@ -98,7 +91,6 @@ func processContentImages(htmlContent string, useUploadImg bool) (string, error)
 			}
 			newURL, err = uploadViaUploadImg(imgData)
 		} else {
-			// add_material: no size limit, upload directly
 			newURL, err = uploadViaAddMaterial(imgData)
 		}
 		if err != nil {
@@ -131,11 +123,7 @@ func downloadImage(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	return io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 }
 
 func compressImage(data []byte) ([]byte, error) {
@@ -176,11 +164,9 @@ func compressImage(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// uploadViaUploadImg uses the media/uploadimg endpoint (no quota, ≤1MB limit).
 func uploadViaUploadImg(data []byte) (string, error) {
 	var resp uploadImgResp
-	err := uploadMultipart(wechatUploadImgURL, data, &resp)
-	if err != nil {
+	if err := wechatPostMultipart(cgiUploadImg, "image.jpg", data, "", &resp); err != nil {
 		return "", err
 	}
 	if resp.ErrCode != 0 {
@@ -189,53 +175,15 @@ func uploadViaUploadImg(data []byte) (string, error) {
 	return resp.URL, nil
 }
 
-// uploadViaAddMaterial uses the material/add_material endpoint (permanent material, no size limit).
 func uploadViaAddMaterial(data []byte) (string, error) {
 	var resp addMaterialResp
-	err := uploadMultipart(wechatAddMaterialURL, data, &resp)
-	if err != nil {
+	if err := wechatPostMultipart(cgiAddMaterialUpload, "image.jpg", data, "type=image", &resp); err != nil {
 		return "", err
 	}
 	if resp.ErrCode != 0 {
 		return "", fmt.Errorf("wechat error %d: %s", resp.ErrCode, resp.ErrMsg)
 	}
 	return resp.URL, nil
-}
-
-// uploadMultipart is a shared helper for multipart/form-data uploads to WeChat.
-func uploadMultipart(baseURL string, data []byte, result any) error {
-	return WithWeChatToken(func(token string) error {
-		url := baseURL + "?access_token=" + token
-
-		var body bytes.Buffer
-		writer := multipart.NewWriter(&body)
-		part, err := writer.CreateFormFile("media", "image.jpg")
-		if err != nil {
-			return err
-		}
-		if _, err := part.Write(data); err != nil {
-			return err
-		}
-		writer.Close()
-
-		req, err := http.NewRequest("POST", url, &body)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("request: %w", err)
-		}
-		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
-
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("parse response: %w", err)
-		}
-		return nil
-	})
 }
 
 func truncateStr(s string, max int) string {

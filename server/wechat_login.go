@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 )
 
@@ -133,18 +132,13 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 	// Launch browser (try persistent profile first, fallback to fresh)
 	var u string
 	for _, attempt := range []bool{true, false} {
-		var l *launcher.Launcher
-		if attempt {
-			l = launcher.New().Headless(false).UserDataDir(profileDir)
-		} else {
+		dir := profileDir
+		if !attempt {
 			fmt.Println("login: retrying with fresh profile")
-			l = launcher.New().Headless(false)
-		}
-		if _, err := os.Stat(`C:\Program Files\Google\Chrome\Application\chrome.exe`); err == nil {
-			l = l.Bin(`C:\Program Files\Google\Chrome\Application\chrome.exe`)
+			dir = ""
 		}
 		var cerr error
-		u, cerr = l.Launch()
+		u, cerr = launchChrome(dir)
 		if cerr == nil {
 			break
 		}
@@ -155,7 +149,6 @@ func handleLoginStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Printf("login: launch with profile failed: %v\n", cerr)
-		// Delete stale profile and retry
 		os.RemoveAll(profileDir)
 	}
 

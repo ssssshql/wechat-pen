@@ -2,6 +2,8 @@
 wechat-pen.exe
 md2html.exe
 *.exe
+/proxy/wechat-pen-proxy
+/proxy/wechat-pen-proxy.exe
 
 # Go build artifacts
 /server/spa/
@@ -22,6 +24,8 @@ Thumbs.db
 
 # Config (contains secrets)
 .wechat-pen.json
+.env
+!.env.example
 
 # Materials/downloads
 /materials/

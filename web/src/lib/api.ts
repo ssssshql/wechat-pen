@@ -74,6 +74,7 @@ export function downloadText(filename: string, content: string, mime = 'text/htm
   URL.revokeObjectURL(url)
 }
 
+/** @deprecated local only — kept for one-time migration */
 export function loadDrafts(): DraftItem[] {
   try {
     const raw = localStorage.getItem(DRAFTS_KEY)
@@ -85,17 +86,123 @@ export function loadDrafts(): DraftItem[] {
   }
 }
 
+/** @deprecated local only — kept for one-time migration */
 export function saveDrafts(list: DraftItem[]) {
   localStorage.setItem(DRAFTS_KEY, JSON.stringify(list))
 }
 
+/** @deprecated local only — kept for one-time migration */
 export function getActiveDraftId(): string | null {
   return localStorage.getItem(ACTIVE_DRAFT_KEY)
 }
 
+/** @deprecated local only — kept for one-time migration */
 export function setActiveDraftId(id: string | null) {
   if (id) localStorage.setItem(ACTIVE_DRAFT_KEY, id)
   else localStorage.removeItem(ACTIVE_DRAFT_KEY)
+}
+
+const MIGRATED_KEY = 'wechat-pen:notes-migrated:v1'
+
+export async function fetchNotes(): Promise<{ notes: DraftItem[]; activeId: string }> {
+  const res = await fetch('/api/notes')
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return {
+    notes: (data.notes || []) as DraftItem[],
+    activeId: String(data.activeId || ''),
+  }
+}
+
+export async function createNote(note: Partial<DraftItem>): Promise<DraftItem> {
+  const res = await fetch('/api/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: note.id,
+      name: note.name || '未命名',
+      markdown: note.markdown || '',
+      settings: note.settings || {},
+      updatedAt: note.updatedAt,
+    }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data as DraftItem
+}
+
+export async function updateNote(
+  id: string,
+  patch: {
+    name: string
+    markdown: string
+    settings?: Record<string, unknown>
+    pushHistory?: boolean
+    historyTitle?: string
+  },
+): Promise<DraftItem> {
+  const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data as DraftItem
+}
+
+export async function deleteNote(id: string): Promise<void> {
+  const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText)
+}
+
+export async function setActiveNote(id: string | null): Promise<void> {
+  const res = await fetch('/api/notes/active', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id || '' }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText)
+}
+
+export async function importNotes(
+  notes: DraftItem[],
+  activeId?: string | null,
+): Promise<{ imported: number; activeId: string }> {
+  const res = await fetch('/api/notes/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes, activeId: activeId || '' }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data as { imported: number; activeId: string }
+}
+
+/** One-time: push browser localStorage drafts into SQLite, then mark migrated. */
+export async function migrateLocalDraftsIfNeeded(): Promise<number> {
+  if (localStorage.getItem(MIGRATED_KEY) === '1') return 0
+  const local = loadDrafts()
+  if (!local.length) {
+    localStorage.setItem(MIGRATED_KEY, '1')
+    return 0
+  }
+  try {
+    const remote = await fetchNotes()
+    if (remote.notes.length > 0) {
+      // Server already has data — don't overwrite; just mark done.
+      localStorage.setItem(MIGRATED_KEY, '1')
+      return 0
+    }
+    const result = await importNotes(local, getActiveDraftId())
+    localStorage.setItem(MIGRATED_KEY, '1')
+    return result.imported
+  } catch {
+    // leave unmigrated so next load can retry
+    return 0
+  }
 }
 
 export function loadSettings<T extends object>(fallback: T): T {

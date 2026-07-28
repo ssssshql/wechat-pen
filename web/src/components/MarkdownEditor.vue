@@ -117,24 +117,31 @@ const extensions = computed<Extension[]>(() => [
   }),
 ])
 
-function onReady(payload: { view: EditorView }) {
-  view = payload.view
-  emit('ready', payload.view)
+function onReady(payload: { view?: EditorView } | EditorView) {
+  // vue-codemirror emits { state, view, container }
+  view = (payload && typeof payload === 'object' && 'view' in payload ? payload.view : payload) as EditorView
+  if (view) emit('ready', view)
 }
 
 function insertAtCursor(text: string) {
   if (!view) {
-    model.value = (model.value || '') + text
+    model.value = `${model.value || ''}${text}`
     return
   }
-  const { state } = view
-  const from = state.selection.main.from
-  const to = state.selection.main.to
-  view.dispatch({
-    changes: { from, to, insert: text },
-    selection: { anchor: from + text.length },
-  })
-  view.focus()
+  try {
+    const { state } = view
+    const from = state.selection.main.from
+    const to = state.selection.main.to
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+    })
+    // Keep Vue v-model in sync even if change listener is delayed
+    model.value = view.state.doc.toString()
+    view.focus()
+  } catch {
+    model.value = `${model.value || ''}${text}`
+  }
 }
 
 function wrapSelection(before: string, after: string, placeholder = '') {
@@ -142,18 +149,23 @@ function wrapSelection(before: string, after: string, placeholder = '') {
     model.value = before + (model.value || placeholder) + after
     return
   }
-  const { state } = view
-  const { from, to } = state.selection.main
-  const selected = state.sliceDoc(from, to) || placeholder
-  const insert = before + selected + after
-  view.dispatch({
-    changes: { from, to, insert },
-    selection: {
-      anchor: from + before.length,
-      head: from + before.length + selected.length,
-    },
-  })
-  view.focus()
+  try {
+    const { state } = view
+    const { from, to } = state.selection.main
+    const selected = state.sliceDoc(from, to) || placeholder
+    const insert = before + selected + after
+    view.dispatch({
+      changes: { from, to, insert },
+      selection: {
+        anchor: from + before.length,
+        head: from + before.length + selected.length,
+      },
+    })
+    model.value = view.state.doc.toString()
+    view.focus()
+  } catch {
+    model.value = before + (model.value || placeholder) + after
+  }
 }
 
 function prefixLines(prefix: string) {
@@ -161,17 +173,22 @@ function prefixLines(prefix: string) {
     model.value = prefix + (model.value || '')
     return
   }
-  const { state } = view
-  const { from, to } = state.selection.main
-  const startLine = state.doc.lineAt(from)
-  const endLine = state.doc.lineAt(to)
-  const changes: { from: number; to: number; insert: string }[] = []
-  for (let n = startLine.number; n <= endLine.number; n++) {
-    const line = state.doc.line(n)
-    changes.push({ from: line.from, to: line.from, insert: prefix })
+  try {
+    const { state } = view
+    const { from, to } = state.selection.main
+    const startLine = state.doc.lineAt(from)
+    const endLine = state.doc.lineAt(to)
+    const changes: { from: number; to: number; insert: string }[] = []
+    for (let n = startLine.number; n <= endLine.number; n++) {
+      const line = state.doc.line(n)
+      changes.push({ from: line.from, to: line.from, insert: prefix })
+    }
+    view.dispatch({ changes })
+    model.value = view.state.doc.toString()
+    view.focus()
+  } catch {
+    model.value = prefix + (model.value || '')
   }
-  view.dispatch({ changes })
-  view.focus()
 }
 
 function runToolbar(action: string) {

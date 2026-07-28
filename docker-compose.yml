@@ -1,0 +1,56 @@
+# Services
+#   wechat-proxy  — fixed-egress open-platform agent
+#   wechat-pen    — full editor + Chromium (QR login / CDP)
+#
+#   cp .env.example .env
+#   docker compose up -d --build
+#
+# UI:    http://localhost:8080
+# Proxy: http://localhost:8090
+# Whitelist the proxy host public IP once in WeChat open platform.
+
+services:
+  wechat-proxy:
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    image: wechat-pen-proxy:latest
+    container_name: wechat-pen-proxy
+    restart: unless-stopped
+    ports:
+      - "${WECHAT_PROXY_PORT:-8090}:8090"
+    environment:
+      WECHAT_PROXY_API_KEY: ${WECHAT_PROXY_API_KEY:?set WECHAT_PROXY_API_KEY in .env}
+      WECHAT_PEN_APPID: ${WECHAT_PEN_APPID:?set WECHAT_PEN_APPID in .env}
+      WECHAT_PEN_SECRET: ${WECHAT_PEN_SECRET:?set WECHAT_PEN_SECRET in .env}
+
+#  wechat-pen:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#    image: wechat-pen:latest
+#    container_name: wechat-pen
+#    restart: unless-stopped
+#    ports:
+#      - "${WECHAT_PEN_PORT:-8080}:8080"
+#    # /dev/shm size (default Docker is ~64MB). Chromium needs more or QR/CDP crashes.
+#    # Override in .env: WECHAT_PEN_SHM=2gb
+#    shm_size: ${WECHAT_PEN_SHM:-1gb}
+#    security_opt:
+#      - seccomp:unconfined
+#    environment:
+#      HOME: /data
+#      WECHAT_PEN_HEADLESS: "1"
+#      CHROME_PATH: /usr/bin/chromium
+#      WECHAT_PEN_MODE: ${WECHAT_PEN_MODE:-proxy}
+#      WECHAT_PEN_PROXY_URL: ${WECHAT_PEN_PROXY_URL:-http://wechat-proxy:8090}
+#      WECHAT_PEN_PROXY_KEY: ${WECHAT_PROXY_API_KEY:-}
+#      WECHAT_PEN_APPID: ${WECHAT_PEN_APPID:-}
+#      WECHAT_PEN_SECRET: ${WECHAT_PEN_SECRET:-}
+#    volumes:
+#      - wechat-pen-data:/data
+#    depends_on:
+#      - wechat-proxy
+
+volumes:
+  wechat-pen-data:

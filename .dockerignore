@@ -1,0 +1,18 @@
+# Keep build context small
+.git
+.idea
+.claude
+**/.DS_Store
+**/node_modules
+web/node_modules
+web/dist
+**/*.exe
+**/wechat-pen
+**/wechat-pen-proxy
+proxy/wechat-pen-proxy
+md2html.exe
+md2html.exe~
+materials
+.env
+*.log
+examples

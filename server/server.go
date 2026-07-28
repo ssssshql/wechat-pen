@@ -32,6 +32,10 @@ var currentCreds = struct {
 	LoginCookie string `json:"login_cookie"`
 	Token       string `json:"token"`
 	Fingerprint string `json:"fingerprint"`
+	// Dual-mode open-platform egress
+	Mode         string `json:"mode"`          // local | proxy
+	ProxyBaseURL string `json:"proxy_base_url"` // e.g. https://proxy.example.com
+	ProxyAPIKey  string `json:"proxy_api_key"`
 }{}
 
 // GetCredentials returns a snapshot of current credentials (thread-safe).
@@ -39,6 +43,17 @@ func GetCredentials() (appid, secret string) {
 	currentCredsMu.RLock()
 	defer currentCredsMu.RUnlock()
 	return currentCreds.AppID, currentCreds.Secret
+}
+
+// GetCallMode returns open-platform call mode and proxy settings.
+func GetCallMode() (mode CallMode, baseURL, apiKey string) {
+	currentCredsMu.RLock()
+	defer currentCredsMu.RUnlock()
+	m := CallMode(strings.ToLower(strings.TrimSpace(currentCreds.Mode)))
+	if m != ModeProxy {
+		m = ModeLocal
+	}
+	return m, currentCreds.ProxyBaseURL, currentCreds.ProxyAPIKey
 }
 
 // LoadCredsFromEnv reads credentials from env vars, setting defaults if present.
@@ -50,6 +65,15 @@ func LoadCredsFromEnv() {
 	}
 	if v := os.Getenv("WECHAT_PEN_SECRET"); v != "" && currentCreds.Secret == "" {
 		currentCreds.Secret = v
+	}
+	if v := os.Getenv("WECHAT_PEN_MODE"); v != "" && currentCreds.Mode == "" {
+		currentCreds.Mode = v
+	}
+	if v := os.Getenv("WECHAT_PEN_PROXY_URL"); v != "" && currentCreds.ProxyBaseURL == "" {
+		currentCreds.ProxyBaseURL = v
+	}
+	if v := os.Getenv("WECHAT_PEN_PROXY_KEY"); v != "" && currentCreds.ProxyAPIKey == "" {
+		currentCreds.ProxyAPIKey = v
 	}
 	// Load config file as fallback
 	if cfg, err := loadConfigFile(); err == nil {
@@ -68,15 +92,45 @@ func LoadCredsFromEnv() {
 		if currentCreds.Fingerprint == "" {
 			currentCreds.Fingerprint = cfg.Fingerprint
 		}
+		if currentCreds.Mode == "" {
+			currentCreds.Mode = cfg.Mode
+		}
+		if currentCreds.ProxyBaseURL == "" {
+			currentCreds.ProxyBaseURL = cfg.ProxyBaseURL
+		}
+		if currentCreds.ProxyAPIKey == "" {
+			currentCreds.ProxyAPIKey = cfg.ProxyAPIKey
+		}
+	}
+	if currentCreds.Mode == "" {
+		currentCreds.Mode = string(ModeLocal)
 	}
 }
 
 type configFile struct {
-	AppID       string `json:"appid"`
-	Secret      string `json:"secret"`
-	LoginCookie string `json:"login_cookie"`
-	Token       string `json:"token,omitempty"`
-	Fingerprint string `json:"fingerprint,omitempty"`
+	AppID        string `json:"appid"`
+	Secret       string `json:"secret"`
+	LoginCookie  string `json:"login_cookie"`
+	Token        string `json:"token,omitempty"`
+	Fingerprint  string `json:"fingerprint,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	ProxyBaseURL string `json:"proxy_base_url,omitempty"`
+	ProxyAPIKey  string `json:"proxy_api_key,omitempty"`
+}
+
+func snapshotConfig() configFile {
+	currentCredsMu.RLock()
+	defer currentCredsMu.RUnlock()
+	return configFile{
+		AppID:        currentCreds.AppID,
+		Secret:       currentCreds.Secret,
+		LoginCookie:  currentCreds.LoginCookie,
+		Token:        currentCreds.Token,
+		Fingerprint:  currentCreds.Fingerprint,
+		Mode:         currentCreds.Mode,
+		ProxyBaseURL: currentCreds.ProxyBaseURL,
+		ProxyAPIKey:  currentCreds.ProxyAPIKey,
+	}
 }
 
 func configPath() string {
@@ -129,6 +183,12 @@ func New(opts ...Options) http.Handler {
 	if currentCreds.AppID != "" || currentCreds.Secret != "" {
 		fmt.Printf("credentials: loaded (%s:%d chars)\n", currentCreds.AppID, len(currentCreds.Secret))
 	}
+	mode, base, _ := GetCallMode()
+	if mode == ModeProxy {
+		fmt.Printf("wechat mode → proxy (%s)\n", base)
+	} else {
+		fmt.Printf("wechat mode → local\n")
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/convert", handleConvert)
@@ -137,6 +197,7 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/themes/import", handleThemesImport(o.ThemesDir))
 	mux.HandleFunc("/api/themes/delete", handleThemesDelete(o.ThemesDir))
 	mux.HandleFunc("/api/credentials", handleCredentials)
+	mux.HandleFunc("/api/proxy/test", handleProxyTest)
 	mux.HandleFunc("/api/material/batch", handleMaterialBatch)
 	mux.HandleFunc("/api/material/delete", handleMaterialDelete)
 	mux.HandleFunc("/api/material/upload", handleMaterialUpload)
@@ -158,6 +219,8 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/whitelist/status", handleWhitelistStatus)
 	mux.HandleFunc("/api/whitelist/cancel", handleWhitelistCancel)
 	mux.HandleFunc("/api/whitelist/events", handleWhitelistEvents)
+	mux.HandleFunc("/api/notes", handleNotes)
+	mux.HandleFunc("/api/notes/", handleNotes)
 	mux.HandleFunc("/api/healthz", handleHealth)
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/legacy", handleIndex)
@@ -215,6 +278,9 @@ func ListenAndServe(addr string, opts ...Options) error {
 		} else {
 			o.ThemesDir = "themes"
 		}
+	}
+	if err := initNotesStore(); err != nil {
+		fmt.Printf("warn: notes db init failed: %v\n", err)
 	}
 	s := &http.Server{
 		Addr:              addr,
@@ -305,34 +371,116 @@ func handleStyles(w http.ResponseWriter, r *http.Request) {
 func handleCredentials(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, currentCreds)
+		currentCredsMu.RLock()
+		defer currentCredsMu.RUnlock()
+		// Never expose full secret/api key in logs; still return for settings form (local tool).
+		writeJSON(w, http.StatusOK, map[string]any{
+			"appid":          currentCreds.AppID,
+			"secret":         currentCreds.Secret,
+			"login_cookie":   currentCreds.LoginCookie != "",
+			"token":          currentCreds.Token,
+			"fingerprint":    currentCreds.Fingerprint,
+			"mode":           or(currentCreds.Mode, string(ModeLocal)),
+			"proxy_base_url": currentCreds.ProxyBaseURL,
+			"proxy_api_key":  currentCreds.ProxyAPIKey,
+			"has_secret":     currentCreds.Secret != "",
+			"has_proxy_key":  currentCreds.ProxyAPIKey != "",
+		})
 	case http.MethodPost:
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		defer r.Body.Close()
 		var req struct {
-			AppID  string `json:"appid"`
-			Secret string `json:"secret"`
+			AppID        *string `json:"appid"`
+			Secret       *string `json:"secret"`
+			Mode         *string `json:"mode"`
+			ProxyBaseURL *string `json:"proxy_base_url"`
+			ProxyAPIKey  *string `json:"proxy_api_key"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if req.AppID != "" {
-			currentCreds.AppID = req.AppID
-			os.Setenv("WECHAT_PEN_APPID", req.AppID)
+		currentCredsMu.Lock()
+		if req.AppID != nil {
+			currentCreds.AppID = strings.TrimSpace(*req.AppID)
+			if currentCreds.AppID != "" {
+				os.Setenv("WECHAT_PEN_APPID", currentCreds.AppID)
+			}
 		}
-		if req.Secret != "" {
-			currentCreds.Secret = req.Secret
-			os.Setenv("WECHAT_PEN_SECRET", req.Secret)
+		if req.Secret != nil {
+			currentCreds.Secret = strings.TrimSpace(*req.Secret)
+			if currentCreds.Secret != "" {
+				os.Setenv("WECHAT_PEN_SECRET", currentCreds.Secret)
+			}
 		}
-		// Persist to ~/.wechat-pen.json
-		if err := saveConfigFile(configFile{AppID: currentCreds.AppID, Secret: currentCreds.Secret}); err != nil {
+		if req.Mode != nil {
+			m := strings.ToLower(strings.TrimSpace(*req.Mode))
+			if m != string(ModeProxy) {
+				m = string(ModeLocal)
+			}
+			currentCreds.Mode = m
+		}
+		if req.ProxyBaseURL != nil {
+			currentCreds.ProxyBaseURL = strings.TrimRight(strings.TrimSpace(*req.ProxyBaseURL), "/")
+		}
+		if req.ProxyAPIKey != nil {
+			currentCreds.ProxyAPIKey = strings.TrimSpace(*req.ProxyAPIKey)
+		}
+		cfg := configFile{
+			AppID:        currentCreds.AppID,
+			Secret:       currentCreds.Secret,
+			LoginCookie:  currentCreds.LoginCookie,
+			Token:        currentCreds.Token,
+			Fingerprint:  currentCreds.Fingerprint,
+			Mode:         currentCreds.Mode,
+			ProxyBaseURL: currentCreds.ProxyBaseURL,
+			ProxyAPIKey:  currentCreds.ProxyAPIKey,
+		}
+		currentCredsMu.Unlock()
+		InvalidateToken()
+		if err := saveConfigFile(cfg); err != nil {
 			fmt.Printf("warn: save config: %v\n", err)
 		}
-		writeJSON(w, http.StatusOK, currentCreds)
+		mode, base, _ := GetCallMode()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":             true,
+			"mode":           mode,
+			"proxy_base_url": base,
+			"appid":          cfg.AppID,
+			"has_secret":     cfg.Secret != "",
+			"has_proxy_key":  cfg.ProxyAPIKey != "",
+		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func handleProxyTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	defer r.Body.Close()
+	var req struct {
+		BaseURL string `json:"proxy_base_url"`
+		APIKey  string `json:"proxy_api_key"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.BaseURL == "" || req.APIKey == "" {
+		_, base, key := GetCallMode()
+		if req.BaseURL == "" {
+			req.BaseURL = base
+		}
+		if req.APIKey == "" {
+			req.APIKey = key
+		}
+	}
+	if err := TestProxyConnection(req.BaseURL, req.APIKey); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func handleThemesReload(dir string) http.HandlerFunc {
@@ -535,7 +683,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

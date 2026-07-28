@@ -17,9 +17,9 @@ defineProps<{ preview: string; html: string }>()
     </div>
 
     <!-- Preview: the iframe content already contains the phone shell -->
-    <div v-show="view === 'preview'" class="min-h-0 flex-1 bg-[#e8eaed]">
+    <div v-show="view === 'preview'" class="min-h-0 flex-1 overflow-hidden bg-[#e8eaed]">
       <iframe
-        class="size-full border-0"
+        class="block size-full border-0"
         title="preview"
         sandbox="allow-same-origin allow-scripts"
         :srcdoc="preview"

@@ -190,7 +190,12 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
           <TooltipContent side="bottom">插入组件</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem v-for="s in SNIPPETS" :key="s.label" @click="emit('insert', s.insert)">
+          <DropdownMenuItem
+            v-for="s in SNIPPETS"
+            :key="s.label"
+            @select.prevent="emit('insert', s.insert)"
+            @click="emit('insert', s.insert)"
+          >
             {{ s.label }}
           </DropdownMenuItem>
         </DropdownMenuContent>

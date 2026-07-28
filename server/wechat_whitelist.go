@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 )
 
@@ -279,35 +278,27 @@ func runWhitelistAutomation() {
 		}
 	}
 
-	if browser == nil {
-		profileDir := whitelistProfileDir()
-		os.MkdirAll(profileDir, 0o700)
-
-		var l *launcher.Launcher
-		l = launcher.New().Headless(false).UserDataDir(profileDir)
-		if _, err := os.Stat(`C:\Program Files\Google\Chrome\Application\chrome.exe`); err == nil {
-			l = l.Bin(`C:\Program Files\Google\Chrome\Application\chrome.exe`)
-		}
-		u, cerr := l.Launch()
-		if cerr != nil {
-			os.Remove(filepath.Join(profileDir, "SingletonLock"))
-			u, cerr = l.Launch()
+		if browser == nil {
+			profileDir := whitelistProfileDir()
+			u, cerr := launchChrome(profileDir)
 			if cerr != nil {
-				setWhitelistError("启动浏览器失败: " + cerr.Error())
+				u, cerr = launchChrome("")
+				if cerr != nil {
+					setWhitelistError("启动浏览器失败: " + cerr.Error())
+					return
+				}
+			}
+
+			browser = rod.New().ControlURL(u)
+			if err := browser.Connect(); err != nil {
+				setWhitelistError("连接浏览器失败: " + err.Error())
 				return
 			}
-		}
 
-		browser = rod.New().ControlURL(u)
-		if err := browser.Connect(); err != nil {
-			setWhitelistError("连接浏览器失败: " + err.Error())
-			return
+			currentWhitelist.mu.Lock()
+			currentWhitelist.browser = browser
+			currentWhitelist.mu.Unlock()
 		}
-
-		currentWhitelist.mu.Lock()
-		currentWhitelist.browser = browser
-		currentWhitelist.mu.Unlock()
-	}
 
 	defer func() {
 		// Never close the browser — keep it alive so the developer platform

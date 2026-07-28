@@ -28,8 +28,8 @@ func wrapWeChatPreview(body string, cfg Config) ([]byte, error) {
 	radiusOuter := "36px"
 	radiusInner := "26px"
 	padFrame := "12px"
-	minH := "640px"
-	pagePad := "20px 12px 32px"
+	minH := "100%"
+	pagePad := "12px 12px 16px"
 	bodyPad := "8px 16px 48px"
 	showChrome := true
 	shadow := "0 0 0 1px rgba(255,255,255,.08) inset, 0 20px 50px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12)"
@@ -46,7 +46,7 @@ func wrapWeChatPreview(body string, cfg Config) ([]byte, error) {
 		radiusOuter = "28px"
 		radiusInner = "20px"
 		padFrame = "10px"
-		minH = "720px"
+		minH = "100%"
 	case "full":
 		width = "100%"
 		radiusOuter = "0"
@@ -105,14 +105,19 @@ const previewTpl = `<!DOCTYPE html>
   }
   body {
     display: flex;
-    align-items: flex-start;
+    align-items: stretch;
     justify-content: center;
     padding: %s;
+    height: 100%%;
     min-height: 100%%;
+    box-sizing: border-box;
   }
   .device {
     width: %s;
     max-width: 100%%;
+    height: 100%%;
+    display: flex;
+    flex-direction: column;
     background: %s;
     border-radius: %s;
     padding: %s;
@@ -124,8 +129,9 @@ const previewTpl = `<!DOCTYPE html>
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
     min-height: %s;
-    max-height: calc(100vh - 48px);
+    height: 100%%;
   }
   .status-bar {
     height: 44px;

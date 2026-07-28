@@ -191,6 +191,8 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.secret, "secret", "", "WeChat Official Account AppSecret")
 }
 
+
+
 // -- batch --
 
 var batchFlags struct {

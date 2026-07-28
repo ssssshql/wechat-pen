@@ -10,7 +10,7 @@ Markdown → 微信公众号可粘贴 HTML 工具（Go + goldmark + chroma + Vue
 - **代码高亮**：chroma 内联色（GitHub / Xcode / Monokai / Dracula），空格用 NBSP 防粘贴丢失
 - **目录 / 文末 / 组件模板**：名片、小程序链接、关注引导、步骤条、三栏要点…
 - **粘贴体检**：本地图片、过长代码、剥离标签等风险提示
-- **Web UI**：实时预览、草稿、批量导出、可拖拽分栏、快捷键
+- **Web UI**：实时预览、笔记、可拖拽分栏、快捷键
 - **CLI**：单文件 / 批量 / watch
 
 ## 快速开始
@@ -38,6 +38,15 @@ npm run dev
 # 打开 http://127.0.0.1:8080
 ```
 
+### Docker
+
+```bash
+cp .env.example .env   # 填 WECHAT_PROXY_API_KEY / APPID / SECRET
+docker compose up -d --build
+# pen → http://127.0.0.1:8080  proxy → :8090
+```
+
+容器内 `HOME=/data` 持久化笔记与配置；含 headless Chromium，可扫码登录。开放平台调用默认走同 compose 的 proxy。
 ## CLI
 
 ```bash
@@ -93,7 +102,6 @@ wechat-pen serve -addr :8080
 - 对比：两种样式包并排预览
 - 工具栏：标题/加粗/列表/代码/链接/图片
 - 字数：汉字数、预计阅读时长、标题长度提示
-- 草稿历史：自动快照，可回滚
 - 主题导入导出：JSON 共享主色/字号等
 - 复制后可一键打开公众号后台
 
