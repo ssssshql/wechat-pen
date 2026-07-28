@@ -124,6 +124,9 @@ export async function createNote(note: Partial<DraftItem>): Promise<DraftItem> {
       markdown: note.markdown || '',
       settings: note.settings || {},
       updatedAt: note.updatedAt,
+      publishStatus: note.publishStatus || 'none',
+      mediaId: note.mediaId || '',
+      publishedAt: note.publishedAt || 0,
     }),
   })
   const data = await res.json()
@@ -139,6 +142,8 @@ export async function updateNote(
     settings?: Record<string, unknown>
     pushHistory?: boolean
     historyTitle?: string
+    publishStatus?: string
+    mediaId?: string
   },
 ): Promise<DraftItem> {
   const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, {
@@ -149,6 +154,25 @@ export async function updateNote(
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || res.statusText)
   return data as DraftItem
+}
+
+export async function setNotePublishStatus(
+  id: string,
+  publishStatus: string,
+  mediaId?: string,
+): Promise<DraftItem> {
+  // Fetch current first so we don't wipe markdown/name
+  const cur = await fetch(`/api/notes/${encodeURIComponent(id)}`)
+  const note = await cur.json()
+  if (!cur.ok) throw new Error(note.error || cur.statusText)
+  return updateNote(id, {
+    name: note.name || '未命名',
+    markdown: note.markdown || '',
+    settings: note.settings,
+    pushHistory: false,
+    publishStatus,
+    mediaId: mediaId !== undefined ? mediaId : note.mediaId,
+  })
 }
 
 export async function deleteNote(id: string): Promise<void> {

@@ -71,6 +71,9 @@ export interface DraftSnapshot {
   title?: string
 }
 
+/** none = 未发布, draft = 已发到草稿箱, published = 正式文章 */
+export type PublishStatus = 'none' | 'draft' | 'published'
+
 export interface DraftItem {
   id: string
   name: string
@@ -78,6 +81,15 @@ export interface DraftItem {
   updatedAt: number
   settings?: Partial<ConvertRequest>
   history?: DraftSnapshot[]
+  publishStatus?: PublishStatus
+  mediaId?: string
+  publishedAt?: number
+}
+
+export const PUBLISH_STATUS_LABEL: Record<PublishStatus, string> = {
+  none: '未发布',
+  draft: '草稿',
+  published: '已发布',
 }
 
 export interface ThemePreset {

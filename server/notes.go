@@ -26,12 +26,27 @@ type NoteSnapshot struct {
 
 // Note is a local note stored in SQLite.
 type Note struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Markdown  string         `json:"markdown"`
-	UpdatedAt int64          `json:"updatedAt"`
-	Settings  map[string]any `json:"settings,omitempty"`
-	History   []NoteSnapshot `json:"history,omitempty"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Markdown      string         `json:"markdown"`
+	UpdatedAt     int64          `json:"updatedAt"`
+	Settings      map[string]any `json:"settings,omitempty"`
+	History       []NoteSnapshot `json:"history,omitempty"`
+	PublishStatus string         `json:"publishStatus"`           // none | draft | published
+	MediaID       string         `json:"mediaId,omitempty"`       // wechat draft/publish media_id
+	PublishedAt   int64          `json:"publishedAt,omitempty"` // last status change
+}
+
+// NormalizePublishStatus maps free-form input to none|draft|published.
+func NormalizePublishStatus(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "draft", "wechat_draft", "草稿", "草稿箱":
+		return "draft"
+	case "published", "publish", "formal", "正式", "已发布":
+		return "published"
+	default:
+		return "none"
+	}
 }
 
 type notesStore struct {
@@ -87,6 +102,14 @@ CREATE TABLE IF NOT EXISTS meta (
 		_ = db.Close()
 		return fmt.Errorf("schema: %w", err)
 	}
+	// migrations for publish tracking (idempotent)
+	for _, q := range []string{
+		`ALTER TABLE notes ADD COLUMN publish_status TEXT NOT NULL DEFAULT 'none'`,
+		`ALTER TABLE notes ADD COLUMN media_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE notes ADD COLUMN published_at INTEGER NOT NULL DEFAULT 0`,
+	} {
+		_, _ = db.Exec(q) // ignore "duplicate column" on existing DBs
+	}
 	notesDB = &notesStore{db: db}
 	fmt.Printf("notes db → %s\n", path)
 	return nil
@@ -97,7 +120,7 @@ func (s *notesStore) list() ([]Note, error) {
 	defer s.mu.Unlock()
 	// Load all note rows first and close the cursor before any nested queries.
 	// With MaxOpenConns(1), holding rows open while querying history deadlocks.
-	rows, err := s.db.Query(`SELECT id, name, markdown, settings, updated_at FROM notes ORDER BY updated_at DESC`)
+	rows, err := s.db.Query(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at FROM notes ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +155,7 @@ func (s *notesStore) list() ([]Note, error) {
 func (s *notesStore) get(id string) (Note, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at FROM notes WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at FROM notes WHERE id = ?`, id)
 	n, err := scanNote(row)
 	if err != nil {
 		return Note{}, err
@@ -154,13 +177,14 @@ func (s *notesStore) create(n Note) (Note, error) {
 	if n.UpdatedAt == 0 {
 		n.UpdatedAt = time.Now().UnixMilli()
 	}
+	n.PublishStatus = NormalizePublishStatus(n.PublishStatus)
 	settings, _ := json.Marshal(n.Settings)
 	if n.Settings == nil {
 		settings = []byte("{}")
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO notes (id, name, markdown, settings, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		n.ID, n.Name, n.Markdown, string(settings), n.UpdatedAt,
+		`INSERT INTO notes (id, name, markdown, settings, updated_at, publish_status, media_id, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Name, n.Markdown, string(settings), n.UpdatedAt, n.PublishStatus, n.MediaID, n.PublishedAt,
 	)
 	if err != nil {
 		return Note{}, err
@@ -171,7 +195,7 @@ func (s *notesStore) create(n Note) (Note, error) {
 	return n, nil
 }
 
-func (s *notesStore) update(id string, name, markdown string, settings map[string]any, pushHist bool, histTitle string) (Note, error) {
+func (s *notesStore) update(id string, name, markdown string, settings map[string]any, pushHist bool, histTitle string, publishStatus *string, mediaID *string) (Note, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -186,9 +210,29 @@ func (s *notesStore) update(id string, name, markdown string, settings map[strin
 	if settings == nil {
 		settingsJSON = []byte("{}")
 	}
+
+	var curStatus, curMedia string
+	var curPubAt int64
+	_ = s.db.QueryRow(`SELECT publish_status, media_id, published_at FROM notes WHERE id = ?`, id).Scan(&curStatus, &curMedia, &curPubAt)
+	if curStatus == "" {
+		curStatus = "none"
+	}
+	newStatus := curStatus
+	newMedia := curMedia
+	newPubAt := curPubAt
+	if publishStatus != nil {
+		newStatus = NormalizePublishStatus(*publishStatus)
+		if newStatus != curStatus {
+			newPubAt = now
+		}
+	}
+	if mediaID != nil {
+		newMedia = strings.TrimSpace(*mediaID)
+	}
+
 	_, err = s.db.Exec(
-		`UPDATE notes SET name = ?, markdown = ?, settings = ?, updated_at = ? WHERE id = ?`,
-		name, markdown, string(settingsJSON), now, id,
+		`UPDATE notes SET name = ?, markdown = ?, settings = ?, updated_at = ?, publish_status = ?, media_id = ?, published_at = ? WHERE id = ?`,
+		name, markdown, string(settingsJSON), now, newStatus, newMedia, newPubAt, id,
 	)
 	if err != nil {
 		return Note{}, err
@@ -203,7 +247,6 @@ func (s *notesStore) update(id string, name, markdown string, settings map[strin
 		if err != nil {
 			return Note{}, err
 		}
-		// trim to maxNoteHistory
 		rows, err := s.db.Query(
 			`SELECT id FROM note_history WHERE note_id = ? ORDER BY at DESC`, id,
 		)
@@ -227,7 +270,7 @@ func (s *notesStore) update(id string, name, markdown string, settings map[strin
 		}
 	}
 
-	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at FROM notes WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at FROM notes WHERE id = ?`, id)
 	n, err := scanNote(row)
 	if err != nil {
 		return Note{}, err
@@ -239,7 +282,6 @@ func (s *notesStore) update(id string, name, markdown string, settings map[strin
 	n.History = hist
 	return n, nil
 }
-
 func (s *notesStore) delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -276,14 +318,17 @@ func (s *notesStore) importNotes(list []Note) (int, error) {
 			note.UpdatedAt = time.Now().UnixMilli()
 		}
 		_, err := tx.Exec(
-			`INSERT INTO notes (id, name, markdown, settings, updated_at) VALUES (?, ?, ?, ?, ?)
+			`INSERT INTO notes (id, name, markdown, settings, updated_at, publish_status, media_id, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET
 			   name=excluded.name,
 			   markdown=excluded.markdown,
 			   settings=excluded.settings,
-			   updated_at=excluded.updated_at`,
-			note.ID, note.Name, note.Markdown, string(settings), note.UpdatedAt,
-		)
+			   updated_at=excluded.updated_at,
+			   publish_status=excluded.publish_status,
+			   media_id=excluded.media_id,
+			   published_at=excluded.published_at`,
+				note.ID, note.Name, note.Markdown, string(settings), note.UpdatedAt, NormalizePublishStatus(note.PublishStatus), note.MediaID, note.PublishedAt,
+			)
 		if err != nil {
 			return 0, err
 		}
@@ -376,15 +421,19 @@ type rowScanner interface {
 func scanNote(row rowScanner) (Note, error) {
 	var n Note
 	var settings string
-	if err := row.Scan(&n.ID, &n.Name, &n.Markdown, &settings, &n.UpdatedAt); err != nil {
+	var status, media string
+	var pubAt int64
+	if err := row.Scan(&n.ID, &n.Name, &n.Markdown, &settings, &n.UpdatedAt, &status, &media, &pubAt); err != nil {
 		return Note{}, err
 	}
 	if settings != "" && settings != "{}" {
 		_ = json.Unmarshal([]byte(settings), &n.Settings)
 	}
+	n.PublishStatus = NormalizePublishStatus(status)
+	n.MediaID = media
+	n.PublishedAt = pubAt
 	return n, nil
 }
-
 func randSuffix() string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 5)
@@ -481,11 +530,13 @@ func handleNotes(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 		defer r.Body.Close()
 		var req struct {
-			Name      string         `json:"name"`
-			Markdown  string         `json:"markdown"`
-			Settings  map[string]any `json:"settings"`
-			PushHist  *bool          `json:"pushHistory"`
-			HistTitle string         `json:"historyTitle"`
+			Name          string         `json:"name"`
+			Markdown      string         `json:"markdown"`
+			Settings      map[string]any `json:"settings"`
+			PushHist      *bool          `json:"pushHistory"`
+			HistTitle     string         `json:"historyTitle"`
+			PublishStatus *string        `json:"publishStatus"`
+			MediaID       *string        `json:"mediaId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -495,7 +546,7 @@ func handleNotes(w http.ResponseWriter, r *http.Request) {
 		if req.PushHist != nil {
 			push = *req.PushHist
 		}
-		n, err := notesDB.update(path, req.Name, req.Markdown, req.Settings, push, req.HistTitle)
+		n, err := notesDB.update(path, req.Name, req.Markdown, req.Settings, push, req.HistTitle, req.PublishStatus, req.MediaID)
 		if err == sql.ErrNoRows {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return

@@ -10,8 +10,8 @@ import MaterialBrowser from '@/components/MaterialBrowser.vue'
 import MpBrowser from '@/components/MpBrowser.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import PreviewPanel from '@/components/PreviewPanel.vue'
-import { convertMarkdown, downloadText, importTheme, loadSettings, openMpGuide, saveSettings, addDraft, fetchMaterials, uploadMaterial, fetchNotes, createNote, updateNote, deleteNote, setActiveNote, migrateLocalDraftsIfNeeded } from '@/lib/api'
-import { SAMPLE_MD, STYLE_PRESETS, computeStats, type DraftItem, type HighlightTheme, type MaterialItem, type PreviewShell, type PreviewWidth, type StylePack, type Theme } from '@/lib/types'
+import { convertMarkdown, downloadText, importTheme, loadSettings, openMpGuide, saveSettings, addDraft, fetchMaterials, uploadMaterial, fetchNotes, createNote, updateNote, deleteNote, setActiveNote, migrateLocalDraftsIfNeeded, setNotePublishStatus } from '@/lib/api'
+import { SAMPLE_MD, STYLE_PRESETS, computeStats, PUBLISH_STATUS_LABEL, type DraftItem, type HighlightTheme, type MaterialItem, type PreviewShell, type PreviewWidth, type PublishStatus, type StylePack, type Theme } from '@/lib/types'
 
 const markdown = ref(SAMPLE_MD)
 const theme = ref<Theme>('wechat')
@@ -207,12 +207,56 @@ async function publishDraft() {
       primaryColor: primaryColor.value,
       upload_images: draftUploadImages.value,
     })
+    if (activeDraftId.value) {
+      try {
+        const n = await setNotePublishStatus(activeDraftId.value, 'draft', result.media_id)
+        const idx = drafts.value.findIndex((d) => d.id === n.id)
+        if (idx >= 0) drafts.value[idx] = { ...drafts.value[idx], ...n }
+      } catch (e) {
+        console.warn('update publish status failed', e)
+      }
+    }
     toast.success(`已发布到草稿箱，media_id: ${result.media_id}`)
     showDraftDialog.value = false
   } catch (e) {
     toast.error(e instanceof Error ? e.message : '发布失败')
   } finally {
     draftSending.value = false
+  }
+}
+
+function notePublishStatus(d?: DraftItem | null): PublishStatus {
+  const s = d?.publishStatus
+  if (s === 'draft' || s === 'published') return s
+  return 'none'
+}
+
+async function cyclePublishStatus(id: string, e?: Event) {
+  e?.stopPropagation()
+  e?.preventDefault()
+  const d = drafts.value.find((x) => x.id === id)
+  if (!d) return
+  const cur = notePublishStatus(d)
+  const next: PublishStatus = cur === 'none' ? 'draft' : cur === 'draft' ? 'published' : 'none'
+  try {
+    const n = await setNotePublishStatus(id, next, d.mediaId)
+    const idx = drafts.value.findIndex((x) => x.id === id)
+    if (idx >= 0) drafts.value[idx] = { ...drafts.value[idx], ...n }
+    toast.message(`状态：${PUBLISH_STATUS_LABEL[next]}`)
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '更新状态失败')
+  }
+}
+
+async function setPublishStatusManual(id: string, status: PublishStatus) {
+  const d = drafts.value.find((x) => x.id === id)
+  if (!d) return
+  try {
+    const n = await setNotePublishStatus(id, status, d.mediaId)
+    const idx = drafts.value.findIndex((x) => x.id === id)
+    if (idx >= 0) drafts.value[idx] = { ...drafts.value[idx], ...n }
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '更新状态失败')
   }
 }
 
@@ -447,9 +491,26 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
               @keydown.esc.prevent="cancelRename"
               @blur="commitRename"
             />
-            <div v-else class="flex min-w-0 items-baseline justify-between gap-2">
-              <span class="truncate text-[12px] font-medium text-[#2f3437]">{{ d.name || '未命名' }}</span>
-              <span class="shrink-0 font-mono text-[10px] text-[#a0a09a]">{{ formatNoteTime(d.updatedAt) }}</span>
+            <div v-else class="flex min-w-0 flex-col gap-0.5">
+              <div class="flex min-w-0 items-center gap-1.5">
+                <span class="truncate text-[12px] font-medium text-[#2f3437]">{{ d.name || '未命名' }}</span>
+                <button
+                  v-if="notePublishStatus(d) !== 'none'"
+                  type="button"
+                  class="note-status shrink-0"
+                  :data-status="notePublishStatus(d)"
+                  @click="cyclePublishStatus(d.id, $event)"
+                >{{ PUBLISH_STATUS_LABEL[notePublishStatus(d)] }}</button>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-mono text-[10px] text-[#a0a09a]">{{ formatNoteTime(d.updatedAt) }}</span>
+                <button
+                  v-if="notePublishStatus(d) === 'none'"
+                  type="button"
+                  class="text-[10px] text-[#a0a09a] opacity-0 group-hover:opacity-100"
+                  @click="cyclePublishStatus(d.id, $event)"
+                >标记</button>
+              </div>
             </div>
           </div>
           <button type="button" class="flex size-6 shrink-0 items-center justify-center rounded text-[#a0a09a] opacity-0 hover:bg-black/[0.04] hover:text-[#9f2f2d] group-hover:opacity-100" title="删除" @click.stop="deleteDraft(d.id)">
@@ -499,8 +560,27 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
                   @blur="commitRename"
                 />
                 <template v-else>
-                  <div class="truncate text-[12.5px] leading-5 font-medium text-[#2f3437]">{{ d.name || '未命名' }}</div>
-                  <div class="mt-0.5 font-mono text-[10px] leading-none tracking-tight text-[#a0a09a] tabular-nums">{{ formatNoteTime(d.updatedAt) }}</div>
+                  <div class="flex min-w-0 items-center gap-1.5">
+                    <span class="truncate text-[12.5px] leading-5 font-medium text-[#2f3437]">{{ d.name || '未命名' }}</span>
+                    <button
+                      v-if="notePublishStatus(d) !== 'none'"
+                      type="button"
+                      class="note-status shrink-0"
+                      :data-status="notePublishStatus(d)"
+                      :title="'点击切换状态 · 当前：' + PUBLISH_STATUS_LABEL[notePublishStatus(d)]"
+                      @click="cyclePublishStatus(d.id, $event)"
+                    >{{ PUBLISH_STATUS_LABEL[notePublishStatus(d)] }}</button>
+                  </div>
+                  <div class="mt-0.5 flex items-center justify-between gap-2">
+                    <span class="font-mono text-[10px] leading-none tracking-tight text-[#a0a09a] tabular-nums">{{ formatNoteTime(d.updatedAt) }}</span>
+                    <button
+                      v-if="notePublishStatus(d) === 'none'"
+                      type="button"
+                      class="text-[10px] leading-none text-[#a0a09a] opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#787774]"
+                      title="标记发布状态"
+                      @click="cyclePublishStatus(d.id, $event)"
+                    >标记</button>
+                  </div>
                 </template>
               </div>
               <button
