@@ -256,7 +256,7 @@ onBeforeUnmount(() => { if (loginEventSource) loginEventSource.close(); if (wlEv
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40" @click.self="emit('close')">
+  <div class="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40">
     <div class="bg-background w-full max-w-md rounded-xl shadow-2xl mx-4 flex flex-col max-h-[85vh]" @click.stop>
       <!-- Header -->
       <div class="flex items-center gap-2.5 border-b px-4 py-3 shrink-0">

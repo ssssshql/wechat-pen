@@ -1,0 +1,16 @@
+{
+  "id": "from-获省政府批复-天河推动8条道路建设",
+  "name": "获省政府批复！天河推动8条道路建设 · 提取",
+  "description": "从公众号文章提取内联样式 · 「获省政府批复！天河推动8条道路建设」 · 来源已记录",
+  "primary": "#cfa46d",
+  "base": "font-size:{{fontSize}};line-height:{{lineHeight}};margin:0 auto;margin-left:auto;margin-right:auto;margin-top:10px;max-width:680px;word-wrap:break-word;",
+  "tags": {
+    "h1": "display:block;font-size:17px;text-align:center;",
+    "hr": "display:block;border-color:rgba(0, 0, 0, 0.1);border-style:solid;border-bottom-width:0px;border-left-width:0px;border-right-width:0px;transform-origin:0px 0px;transform:scale(1, 0.5);",
+    "img": "display:block;max-width:100%;height:auto;width:110.991px !important;height:auto !important;",
+    "p": "display:block;font-size:{{fontSize}};line-height:{{lineHeight}};margin:0 0 {{gap}};text-align:{{align}};{{indent}}",
+    "section": "margin-top:10px;margin-right:auto;margin-left:auto;",
+    "ul": "display:block;list-style-type:disc;"
+  },
+  "extends": "simple"
+}

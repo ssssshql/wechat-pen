@@ -84,6 +84,7 @@ export interface DraftItem {
   publishStatus?: PublishStatus
   mediaId?: string
   publishedAt?: number
+  type?: 'article' | 'image_post'
 }
 
 export const PUBLISH_STATUS_LABEL: Record<PublishStatus, string> = {

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
-import { Image, Copy, Loader2, RefreshCw, ChevronLeft, ChevronRight, X, Trash2, ImageUp, Search, ArrowLeft, Rss } from '@lucide/vue'
+import { Image, Copy, Loader2, RefreshCw, ChevronLeft, ChevronRight, X, Trash2, ImageUp, Search, ArrowLeft, Rss, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { fetchMaterials, deleteMaterial, searchBiz, fetchBizArticles, type BizItem, type PublishedArticle } from '@/lib/api'
+import { fetchMaterials, deleteMaterial, searchBiz, fetchBizArticles, analyzeStyle, type BizItem, type PublishedArticle } from '@/lib/api'
 import type { MaterialItem } from '@/lib/types'
 
 function proxyImg(url: string) { return url ? `/api/biz/image/proxy?url=${encodeURIComponent(url)}` : '' }
 
-const emit = defineEmits<{ insert: [text: string]; close: []; selectCover: [mediaId: string] }>()
+const emit = defineEmits<{ insert: [text: string]; close: []; selectCover: [mediaId: string]; styleAnalyzed: [] }>()
 
 type Tab = 'materials' | 'biz'
 const tab = ref<Tab>('materials')
@@ -83,10 +83,45 @@ const bizArticlesLoading = ref(false)
 const bizArticlesTotal = ref(0)
 const viewerUrl = ref('')
 const viewerTitle = ref('')
+const analyzing = ref(false)
+const analyzingBizId = ref('')
+const searchHistory = ref<string[]>([])
+
+function loadSearchHistory() {
+  try {
+    const raw = localStorage.getItem('wechat-pen:mp-search-history')
+    searchHistory.value = raw ? JSON.parse(raw) : []
+  } catch { searchHistory.value = [] }
+}
+
+function saveSearchHistory(query: string) {
+  if (!query.trim()) return
+  const list = searchHistory.value.filter(q => q !== query.trim())
+  list.unshift(query.trim())
+  if (list.length > 10) list.length = 10
+  searchHistory.value = list
+  localStorage.setItem('wechat-pen:mp-search-history', JSON.stringify(list))
+}
+
+async function doAnalyze(fakeid: string, nickname: string) {
+  analyzing.value = true
+  analyzingBizId.value = fakeid
+  try {
+    await analyzeStyle(fakeid, nickname)
+    toast.success('写作风格分析完成: ' + nickname)
+    emit('styleAnalyzed')
+  } catch (e: any) {
+    toast.error('分析失败: ' + (e.message || e))
+  } finally {
+    analyzing.value = false
+    analyzingBizId.value = ''
+  }
+}
 
 async function onSearchBiz() {
   if (!bizQuery.value.trim()) return
   bizSearching.value = true
+  saveSearchHistory(bizQuery.value)
   try { const res = await searchBiz(bizQuery.value.trim()); bizResults.value = res.list } catch (e) { toast.error(e instanceof Error ? e.message : '搜索失败') } finally { bizSearching.value = false }
 }
 async function onSelectBiz(biz: BizItem) {
@@ -104,7 +139,7 @@ function switchTab(t: Tab) {
   }
 }
 
-onMounted(() => { loadList() })
+onMounted(() => { loadList(); loadSearchHistory() })
 </script>
 
 <template>
@@ -230,6 +265,11 @@ onMounted(() => { loadList() })
             <img v-if="selectedBiz?.round_head_img" :src="proxyImg(selectedBiz.round_head_img)" class="size-5 rounded-full shrink-0 bg-muted" />
             <span class="text-xs font-medium truncate">{{ selectedBiz?.nickname || '文章列表' }}</span>
           </div>
+          <Button variant="outline" size="xs" class="h-6 text-[10px] shrink-0 gap-1" :disabled="analyzing" @click="doAnalyze(selectedBiz!.fakeid, selectedBiz!.nickname)">
+            <Loader2 v-if="analyzing" class="size-3 animate-spin" />
+            <Sparkles v-else class="size-3" />
+            {{ analyzing ? '分析中' : '提取风格' }}
+          </Button>
           <span class="text-[10px] text-muted-foreground shrink-0">{{ bizArticlesTotal }} 篇</span>
         </div>
         <div v-if="bizArticlesLoading" class="flex flex-1 items-center justify-center py-8">
@@ -237,11 +277,14 @@ onMounted(() => { loadList() })
         </div>
         <div v-else-if="bizArticles.length" class="flex-1 overflow-auto px-3 py-2 space-y-1.5">
           <button v-for="art in bizArticles" :key="art.appmsg_id"
-            class="hover:bg-muted rounded-md border border-border/50 px-2.5 py-2 space-y-0.5 w-full text-left"
+            class="hover:bg-muted rounded-md border border-border/50 px-2.5 py-2 w-full text-left flex gap-2.5"
             @click="openViewer(art.link, art.title)">
-            <div class="text-[11px] font-medium leading-tight line-clamp-2">{{ art.title }}</div>
-            <div v-if="art.digest" class="text-[9px] text-muted-foreground line-clamp-2 leading-snug">{{ art.digest }}</div>
-            <div class="text-[9px] text-muted-foreground/60">{{ new Date(art.create_time * 1000).toLocaleDateString() }}</div>
+            <div class="flex-1 min-w-0 space-y-0.5">
+              <div class="text-[11px] font-medium leading-tight line-clamp-2">{{ art.title }}</div>
+              <div v-if="art.digest" class="text-[9px] text-muted-foreground line-clamp-1 leading-snug">{{ art.digest }}</div>
+              <div class="text-[9px] text-muted-foreground/60">{{ new Date(art.create_time * 1000).toLocaleDateString() }}</div>
+            </div>
+            <img v-if="art.cover" :src="proxyImg(art.cover)" class="w-16 h-16 rounded shrink-0 object-cover bg-muted" referrerpolicy="no-referrer" loading="lazy" @error="($event.target as HTMLImageElement).style.display = 'none'" />
           </button>
         </div>
         <div v-else class="flex flex-1 items-center justify-center py-8">
@@ -258,6 +301,16 @@ onMounted(() => { loadList() })
             <Search v-else class="size-3" />
           </Button>
         </div>
+        <!-- Search history -->
+        <div v-if="searchHistory.length && !bizQuery" class="flex items-center gap-1 flex-wrap">
+          <span class="text-[10px] text-muted-foreground shrink-0">近期:</span>
+          <button
+            v-for="h in searchHistory"
+            :key="h"
+            class="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
+            @click="bizQuery = h; onSearchBiz()"
+          >{{ h }}</button>
+        </div>
         <div v-if="bizResults.length" class="space-y-1">
           <button v-for="biz in bizResults" :key="biz.fakeid"
             class="hover:bg-muted flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-left"
@@ -267,6 +320,10 @@ onMounted(() => { loadList() })
               <div class="text-[11px] font-medium truncate">{{ biz.nickname }}</div>
               <div class="text-[9px] text-muted-foreground line-clamp-1">{{ biz.signature }}</div>
             </div>
+            <Button variant="ghost" size="icon-xs" class="shrink-0 text-muted-foreground hover:text-primary" :disabled="analyzing" @click.stop="doAnalyze(biz.fakeid, biz.nickname)">
+              <Loader2 v-if="analyzing && analyzingBizId === biz.fakeid" class="size-3 animate-spin" />
+              <Sparkles v-else class="size-3" />
+            </Button>
           </button>
         </div>
         <div v-else-if="!bizSearching" class="flex flex-1 items-center justify-center">

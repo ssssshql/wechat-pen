@@ -34,7 +34,8 @@ type Note struct {
 	History       []NoteSnapshot `json:"history,omitempty"`
 	PublishStatus string         `json:"publishStatus"`           // none | draft | published
 	MediaID       string         `json:"mediaId,omitempty"`       // wechat draft/publish media_id
-	PublishedAt   int64          `json:"publishedAt,omitempty"` // last status change
+	PublishedAt   int64          `json:"publishedAt,omitempty"`   // last status change
+	Type          string         `json:"type,omitempty"`          // article | image_post
 }
 
 // NormalizePublishStatus maps free-form input to none|draft|published.
@@ -107,9 +108,21 @@ CREATE TABLE IF NOT EXISTS meta (
 		`ALTER TABLE notes ADD COLUMN publish_status TEXT NOT NULL DEFAULT 'none'`,
 		`ALTER TABLE notes ADD COLUMN media_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE notes ADD COLUMN published_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE notes ADD COLUMN type TEXT NOT NULL DEFAULT 'article'`,
 	} {
 		_, _ = db.Exec(q) // ignore "duplicate column" on existing DBs
 	}
+	// writing_styles table for AI writing style profiles
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS writing_styles (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL DEFAULT '',
+		fakeid TEXT NOT NULL DEFAULT '',
+		nickname TEXT NOT NULL DEFAULT '',
+		style_prompt TEXT NOT NULL DEFAULT '',
+		sample_count INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL DEFAULT 0
+	)`)
 	notesDB = &notesStore{db: db}
 	fmt.Printf("notes db → %s\n", path)
 	return nil
@@ -120,7 +133,7 @@ func (s *notesStore) list() ([]Note, error) {
 	defer s.mu.Unlock()
 	// Load all note rows first and close the cursor before any nested queries.
 	// With MaxOpenConns(1), holding rows open while querying history deadlocks.
-	rows, err := s.db.Query(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at FROM notes ORDER BY updated_at DESC`)
+	rows, err := s.db.Query(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at, type FROM notes ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +168,7 @@ func (s *notesStore) list() ([]Note, error) {
 func (s *notesStore) get(id string) (Note, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at FROM notes WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at, type FROM notes WHERE id = ?`, id)
 	n, err := scanNote(row)
 	if err != nil {
 		return Note{}, err
@@ -183,8 +196,8 @@ func (s *notesStore) create(n Note) (Note, error) {
 		settings = []byte("{}")
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO notes (id, name, markdown, settings, updated_at, publish_status, media_id, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Name, n.Markdown, string(settings), n.UpdatedAt, n.PublishStatus, n.MediaID, n.PublishedAt,
+		`INSERT INTO notes (id, name, markdown, settings, updated_at, publish_status, media_id, published_at, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Name, n.Markdown, string(settings), n.UpdatedAt, n.PublishStatus, n.MediaID, n.PublishedAt, n.Type,
 	)
 	if err != nil {
 		return Note{}, err
@@ -270,7 +283,7 @@ func (s *notesStore) update(id string, name, markdown string, settings map[strin
 		}
 	}
 
-	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at FROM notes WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, name, markdown, settings, updated_at, publish_status, media_id, published_at, type FROM notes WHERE id = ?`, id)
 	n, err := scanNote(row)
 	if err != nil {
 		return Note{}, err
@@ -318,7 +331,7 @@ func (s *notesStore) importNotes(list []Note) (int, error) {
 			note.UpdatedAt = time.Now().UnixMilli()
 		}
 		_, err := tx.Exec(
-			`INSERT INTO notes (id, name, markdown, settings, updated_at, publish_status, media_id, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO notes (id, name, markdown, settings, updated_at, publish_status, media_id, published_at, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET
 			   name=excluded.name,
 			   markdown=excluded.markdown,
@@ -326,8 +339,9 @@ func (s *notesStore) importNotes(list []Note) (int, error) {
 			   updated_at=excluded.updated_at,
 			   publish_status=excluded.publish_status,
 			   media_id=excluded.media_id,
-			   published_at=excluded.published_at`,
-				note.ID, note.Name, note.Markdown, string(settings), note.UpdatedAt, NormalizePublishStatus(note.PublishStatus), note.MediaID, note.PublishedAt,
+			   published_at=excluded.published_at,
+			   type=excluded.type`,
+				note.ID, note.Name, note.Markdown, string(settings), note.UpdatedAt, NormalizePublishStatus(note.PublishStatus), note.MediaID, note.PublishedAt, note.Type,
 			)
 		if err != nil {
 			return 0, err
@@ -421,9 +435,9 @@ type rowScanner interface {
 func scanNote(row rowScanner) (Note, error) {
 	var n Note
 	var settings string
-	var status, media string
+	var status, media, noteType string
 	var pubAt int64
-	if err := row.Scan(&n.ID, &n.Name, &n.Markdown, &settings, &n.UpdatedAt, &status, &media, &pubAt); err != nil {
+	if err := row.Scan(&n.ID, &n.Name, &n.Markdown, &settings, &n.UpdatedAt, &status, &media, &pubAt, &noteType); err != nil {
 		return Note{}, err
 	}
 	if settings != "" && settings != "{}" {
@@ -432,6 +446,7 @@ func scanNote(row rowScanner) (Note, error) {
 	n.PublishStatus = NormalizePublishStatus(status)
 	n.MediaID = media
 	n.PublishedAt = pubAt
+	n.Type = noteType
 	return n, nil
 }
 func randSuffix() string {

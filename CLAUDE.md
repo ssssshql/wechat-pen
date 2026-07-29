@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 重要规则
+
+- **不要启动项目**：不要运行 `npm run dev`、`go run`、`build.ps1` 或其他构建/编译命令
+- **不要编译项目**：不要运行 `vue-tsc`、`vite build`、`go build` 等编译命令
+- **只修改代码**：仅通过编辑文件来完成修改，用户会自行启动、编译和测试
+
 ## 构建命令
 
 ```powershell

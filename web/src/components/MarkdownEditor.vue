@@ -144,6 +144,40 @@ function insertAtCursor(text: string) {
   }
 }
 
+// Streaming insert: inserts text token-by-token at the cursor, advancing position
+let _streamPos: number | null = null
+
+function startStreamInsert() {
+  if (!view) {
+    _streamPos = null
+    return
+  }
+  _streamPos = view.state.selection.main.from
+}
+
+function streamInsertToken(token: string) {
+  if (!view || _streamPos === null) {
+    model.value = `${model.value || ''}${token}`
+    return
+  }
+  try {
+    view.dispatch({
+      changes: { from: _streamPos, to: _streamPos, insert: token },
+      selection: { anchor: _streamPos + token.length },
+    })
+    _streamPos += token.length
+    model.value = view.state.doc.toString()
+  } catch {
+    model.value = `${model.value || ''}${token}`
+    _streamPos = null
+  }
+}
+
+function endStreamInsert() {
+  _streamPos = null
+  if (view) view.focus()
+}
+
 function wrapSelection(before: string, after: string, placeholder = '') {
   if (!view) {
     model.value = before + (model.value || placeholder) + after
@@ -225,7 +259,7 @@ function runToolbar(action: string) {
   }
 }
 
-defineExpose({ insertAtCursor, wrapSelection, prefixLines, runToolbar, getView: () => view })
+defineExpose({ insertAtCursor, startStreamInsert, streamInsertToken, endStreamInsert, wrapSelection, prefixLines, runToolbar, getView: () => view })
 </script>
 
 <template>

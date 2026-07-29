@@ -36,6 +36,14 @@ var currentCreds = struct {
 	Mode         string `json:"mode"`          // local | proxy
 	ProxyBaseURL string `json:"proxy_base_url"` // e.g. https://proxy.example.com
 	ProxyAPIKey  string `json:"proxy_api_key"`
+	// AI config (chat)
+	AIBaseURL string `json:"ai_base_url"`
+	AIAPIKey  string `json:"ai_api_key"`
+	AIModel   string `json:"ai_model"`
+	// AI config (image generation)
+	AIImageBaseURL string `json:"ai_image_base_url"`
+	AIImageAPIKey  string `json:"ai_image_api_key"`
+	AIImageModel   string `json:"ai_image_model"`
 }{}
 
 // GetCredentials returns a snapshot of current credentials (thread-safe).
@@ -75,6 +83,24 @@ func LoadCredsFromEnv() {
 	if v := os.Getenv("WECHAT_PEN_PROXY_KEY"); v != "" && currentCreds.ProxyAPIKey == "" {
 		currentCreds.ProxyAPIKey = v
 	}
+	if v := os.Getenv("WECHAT_PEN_AI_BASE_URL"); v != "" && currentCreds.AIBaseURL == "" {
+		currentCreds.AIBaseURL = v
+	}
+	if v := os.Getenv("WECHAT_PEN_AI_API_KEY"); v != "" && currentCreds.AIAPIKey == "" {
+		currentCreds.AIAPIKey = v
+	}
+	if v := os.Getenv("WECHAT_PEN_AI_MODEL"); v != "" && currentCreds.AIModel == "" {
+		currentCreds.AIModel = v
+	}
+	if v := os.Getenv("WECHAT_PEN_AI_IMAGE_BASE_URL"); v != "" && currentCreds.AIImageBaseURL == "" {
+		currentCreds.AIImageBaseURL = v
+	}
+	if v := os.Getenv("WECHAT_PEN_AI_IMAGE_API_KEY"); v != "" && currentCreds.AIImageAPIKey == "" {
+		currentCreds.AIImageAPIKey = v
+	}
+	if v := os.Getenv("WECHAT_PEN_AI_IMAGE_MODEL"); v != "" && currentCreds.AIImageModel == "" {
+		currentCreds.AIImageModel = v
+	}
 	// Load config file as fallback
 	if cfg, err := loadConfigFile(); err == nil {
 		if currentCreds.AppID == "" {
@@ -101,6 +127,24 @@ func LoadCredsFromEnv() {
 		if currentCreds.ProxyAPIKey == "" {
 			currentCreds.ProxyAPIKey = cfg.ProxyAPIKey
 		}
+		if currentCreds.AIBaseURL == "" {
+			currentCreds.AIBaseURL = cfg.AIBaseURL
+		}
+		if currentCreds.AIAPIKey == "" {
+			currentCreds.AIAPIKey = cfg.AIAPIKey
+		}
+		if currentCreds.AIModel == "" {
+			currentCreds.AIModel = cfg.AIModel
+		}
+		if currentCreds.AIImageBaseURL == "" {
+			currentCreds.AIImageBaseURL = cfg.AIImageBaseURL
+		}
+		if currentCreds.AIImageAPIKey == "" {
+			currentCreds.AIImageAPIKey = cfg.AIImageAPIKey
+		}
+		if currentCreds.AIImageModel == "" {
+			currentCreds.AIImageModel = cfg.AIImageModel
+		}
 	}
 	if currentCreds.Mode == "" {
 		currentCreds.Mode = string(ModeLocal)
@@ -108,28 +152,40 @@ func LoadCredsFromEnv() {
 }
 
 type configFile struct {
-	AppID        string `json:"appid"`
-	Secret       string `json:"secret"`
-	LoginCookie  string `json:"login_cookie"`
-	Token        string `json:"token,omitempty"`
-	Fingerprint  string `json:"fingerprint,omitempty"`
-	Mode         string `json:"mode,omitempty"`
-	ProxyBaseURL string `json:"proxy_base_url,omitempty"`
-	ProxyAPIKey  string `json:"proxy_api_key,omitempty"`
+	AppID         string `json:"appid"`
+	Secret        string `json:"secret"`
+	LoginCookie   string `json:"login_cookie"`
+	Token         string `json:"token,omitempty"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	ProxyBaseURL  string `json:"proxy_base_url,omitempty"`
+	ProxyAPIKey   string `json:"proxy_api_key,omitempty"`
+	AIBaseURL     string `json:"ai_base_url,omitempty"`
+	AIAPIKey      string `json:"ai_api_key,omitempty"`
+	AIModel       string `json:"ai_model,omitempty"`
+	AIImageBaseURL string `json:"ai_image_base_url,omitempty"`
+	AIImageAPIKey  string `json:"ai_image_api_key,omitempty"`
+	AIImageModel   string `json:"ai_image_model,omitempty"`
 }
 
 func snapshotConfig() configFile {
 	currentCredsMu.RLock()
 	defer currentCredsMu.RUnlock()
 	return configFile{
-		AppID:        currentCreds.AppID,
-		Secret:       currentCreds.Secret,
-		LoginCookie:  currentCreds.LoginCookie,
-		Token:        currentCreds.Token,
-		Fingerprint:  currentCreds.Fingerprint,
-		Mode:         currentCreds.Mode,
-		ProxyBaseURL: currentCreds.ProxyBaseURL,
-		ProxyAPIKey:  currentCreds.ProxyAPIKey,
+		AppID:          currentCreds.AppID,
+		Secret:         currentCreds.Secret,
+		LoginCookie:    currentCreds.LoginCookie,
+		Token:          currentCreds.Token,
+		Fingerprint:    currentCreds.Fingerprint,
+		Mode:           currentCreds.Mode,
+		ProxyBaseURL:   currentCreds.ProxyBaseURL,
+		ProxyAPIKey:    currentCreds.ProxyAPIKey,
+		AIBaseURL:      currentCreds.AIBaseURL,
+		AIAPIKey:       currentCreds.AIAPIKey,
+		AIModel:        currentCreds.AIModel,
+		AIImageBaseURL: currentCreds.AIImageBaseURL,
+		AIImageAPIKey:  currentCreds.AIImageAPIKey,
+		AIImageModel:   currentCreds.AIImageModel,
 	}
 }
 
@@ -196,6 +252,7 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/themes/reload", handleThemesReload(o.ThemesDir))
 	mux.HandleFunc("/api/themes/import", handleThemesImport(o.ThemesDir))
 	mux.HandleFunc("/api/themes/delete", handleThemesDelete(o.ThemesDir))
+	mux.HandleFunc("/api/themes/get", handleThemesGet)
 	mux.HandleFunc("/api/credentials", handleCredentials)
 	mux.HandleFunc("/api/proxy/test", handleProxyTest)
 	mux.HandleFunc("/api/material/batch", handleMaterialBatch)
@@ -206,6 +263,12 @@ func New(opts ...Options) http.Handler {
 	mux.HandleFunc("/api/biz/articles", handleBizArticles)
 	mux.HandleFunc("/api/biz/article/proxy", handleArticleProxy)
 	mux.HandleFunc("/api/biz/image/proxy", handleImageProxy)
+	mux.HandleFunc("/api/ai/config", handleAIConfig)
+	mux.HandleFunc("/api/ai/analyze-style", handleAnalyzeStyle)
+	mux.HandleFunc("/api/ai/styles", handleAIStyles)
+	mux.HandleFunc("/api/ai/chat", handleAIChat)
+	mux.HandleFunc("/api/ai/write", handleAIWrite)
+	mux.HandleFunc("/api/ai/image", handleAIImage)
 	mux.HandleFunc("/api/login/start", handleLoginStart)
 	mux.HandleFunc("/api/login/status", handleLoginStatus)
 	mux.HandleFunc("/api/login/cancel", handleLoginCancel)
@@ -375,26 +438,38 @@ func handleCredentials(w http.ResponseWriter, r *http.Request) {
 		defer currentCredsMu.RUnlock()
 		// Never expose full secret/api key in logs; still return for settings form (local tool).
 		writeJSON(w, http.StatusOK, map[string]any{
-			"appid":          currentCreds.AppID,
-			"secret":         currentCreds.Secret,
-			"login_cookie":   currentCreds.LoginCookie != "",
-			"token":          currentCreds.Token,
-			"fingerprint":    currentCreds.Fingerprint,
-			"mode":           or(currentCreds.Mode, string(ModeLocal)),
-			"proxy_base_url": currentCreds.ProxyBaseURL,
-			"proxy_api_key":  currentCreds.ProxyAPIKey,
-			"has_secret":     currentCreds.Secret != "",
-			"has_proxy_key":  currentCreds.ProxyAPIKey != "",
+			"appid":            currentCreds.AppID,
+			"secret":           currentCreds.Secret,
+			"login_cookie":     currentCreds.LoginCookie != "",
+			"token":            currentCreds.Token,
+			"fingerprint":      currentCreds.Fingerprint,
+			"mode":             or(currentCreds.Mode, string(ModeLocal)),
+			"proxy_base_url":   currentCreds.ProxyBaseURL,
+			"proxy_api_key":    currentCreds.ProxyAPIKey,
+			"has_secret":       currentCreds.Secret != "",
+			"has_proxy_key":    currentCreds.ProxyAPIKey != "",
+			"ai_base_url":      currentCreds.AIBaseURL,
+			"ai_model":         currentCreds.AIModel,
+			"has_ai_key":       currentCreds.AIAPIKey != "",
+			"ai_image_base_url": currentCreds.AIImageBaseURL,
+			"ai_image_model":    currentCreds.AIImageModel,
+			"has_ai_image_key":  currentCreds.AIImageAPIKey != "",
 		})
 	case http.MethodPost:
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		defer r.Body.Close()
 		var req struct {
-			AppID        *string `json:"appid"`
-			Secret       *string `json:"secret"`
-			Mode         *string `json:"mode"`
-			ProxyBaseURL *string `json:"proxy_base_url"`
-			ProxyAPIKey  *string `json:"proxy_api_key"`
+			AppID         *string `json:"appid"`
+			Secret        *string `json:"secret"`
+			Mode          *string `json:"mode"`
+			ProxyBaseURL  *string `json:"proxy_base_url"`
+			ProxyAPIKey   *string `json:"proxy_api_key"`
+			AIBaseURL     *string `json:"ai_base_url"`
+			AIAPIKey      *string `json:"ai_api_key"`
+			AIModel       *string `json:"ai_model"`
+			AIImageBaseURL *string `json:"ai_image_base_url"`
+			AIImageAPIKey  *string `json:"ai_image_api_key"`
+			AIImageModel   *string `json:"ai_image_model"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -426,15 +501,39 @@ func handleCredentials(w http.ResponseWriter, r *http.Request) {
 		if req.ProxyAPIKey != nil {
 			currentCreds.ProxyAPIKey = strings.TrimSpace(*req.ProxyAPIKey)
 		}
+		if req.AIBaseURL != nil {
+			currentCreds.AIBaseURL = strings.TrimRight(strings.TrimSpace(*req.AIBaseURL), "/")
+		}
+		if req.AIAPIKey != nil {
+			currentCreds.AIAPIKey = strings.TrimSpace(*req.AIAPIKey)
+		}
+		if req.AIModel != nil {
+			currentCreds.AIModel = strings.TrimSpace(*req.AIModel)
+		}
+		if req.AIImageBaseURL != nil {
+			currentCreds.AIImageBaseURL = strings.TrimRight(strings.TrimSpace(*req.AIImageBaseURL), "/")
+		}
+		if req.AIImageAPIKey != nil {
+			currentCreds.AIImageAPIKey = strings.TrimSpace(*req.AIImageAPIKey)
+		}
+		if req.AIImageModel != nil {
+			currentCreds.AIImageModel = strings.TrimSpace(*req.AIImageModel)
+		}
 		cfg := configFile{
-			AppID:        currentCreds.AppID,
-			Secret:       currentCreds.Secret,
-			LoginCookie:  currentCreds.LoginCookie,
-			Token:        currentCreds.Token,
-			Fingerprint:  currentCreds.Fingerprint,
-			Mode:         currentCreds.Mode,
-			ProxyBaseURL: currentCreds.ProxyBaseURL,
-			ProxyAPIKey:  currentCreds.ProxyAPIKey,
+			AppID:          currentCreds.AppID,
+			Secret:         currentCreds.Secret,
+			LoginCookie:    currentCreds.LoginCookie,
+			Token:          currentCreds.Token,
+			Fingerprint:    currentCreds.Fingerprint,
+			Mode:           currentCreds.Mode,
+			ProxyBaseURL:   currentCreds.ProxyBaseURL,
+			ProxyAPIKey:    currentCreds.ProxyAPIKey,
+			AIBaseURL:      currentCreds.AIBaseURL,
+			AIAPIKey:       currentCreds.AIAPIKey,
+			AIModel:        currentCreds.AIModel,
+			AIImageBaseURL: currentCreds.AIImageBaseURL,
+			AIImageAPIKey:  currentCreds.AIImageAPIKey,
+			AIImageModel:   currentCreds.AIImageModel,
 		}
 		currentCredsMu.Unlock()
 		InvalidateToken()
@@ -496,6 +595,40 @@ func handleThemesReload(dir string) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"loaded": n, "dir": dir})
 	}
+}
+
+// handleThemesGet returns a full ThemePackFile for export/edit.
+// External packs are returned as stored; builtins are exported as a minimal extends pack.
+func handleThemesGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		return
+	}
+	if pack, ok := converter.GetExternalTheme(id); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "theme": pack})
+		return
+	}
+	for _, b := range converter.ListBuiltinStyles() {
+		if b.ID == id {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true,
+				"theme": converter.ThemePackFile{
+					ID:          b.ID,
+					Name:        b.Name,
+					Description: b.Description,
+					Primary:     b.Primary,
+					Extends:     b.ID,
+				},
+			})
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "theme not found: " + id})
 }
 
 func handleThemesImport(dir string) http.HandlerFunc {

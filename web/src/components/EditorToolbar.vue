@@ -11,6 +11,7 @@ import {
   ListOrdered,
   Puzzle,
   Quote,
+  Sparkles,
   TextAlignJustify,
   TextAlignStart,
 } from '@lucide/vue'
@@ -43,7 +44,7 @@ import {
   type HighlightTheme,
   type StylePack,
 } from '@/lib/types'
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 
 const style = defineModel<StylePack>('style', { required: true })
 const highlightTheme = defineModel<HighlightTheme>('highlightTheme', { required: true })
@@ -55,6 +56,7 @@ const emit = defineEmits<{
   insert: [text: string]
   styleChange: [v: unknown]
   primaryColor: [v: string]
+  'toggle-ai': []
 }>()
 
 const styleOptions = ref<StyleOption[]>(
@@ -86,6 +88,11 @@ onMounted(() => {
   loadStyleOptions()
 })
 
+const props = defineProps<{ refreshKey?: number; aiActive?: boolean }>()
+watch(() => props.refreshKey, () => { loadStyleOptions() })
+
+defineExpose({ reloadStyles: loadStyleOptions })
+
 const formatActions: { id: string; label: string; icon: unknown }[] = [
   { id: 'h2', label: '二级标题', icon: Heading2 },
   { id: 'bold', label: '加粗 Ctrl+B', icon: Bold },
@@ -104,12 +111,11 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
     <div class="toolbar-row flex flex-wrap items-center gap-1 border-b px-2 py-1">
       <!-- Format buttons -->
       <Tooltip v-for="a in formatActions" :key="a.id">
-        <TooltipTrigger as-child>
+        <TooltipTrigger as-child @click="emit('action', a.id)">
           <Button
             variant="ghost"
             size="icon-xs"
             class="text-muted-foreground hover:text-foreground"
-            @click="emit('action', a.id)"
           >
             <component :is="a.icon" class="size-3.5" />
           </Button>
@@ -147,12 +153,11 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
 
       <!-- Text indent toggle -->
       <Tooltip>
-        <TooltipTrigger as-child>
+        <TooltipTrigger as-child @click="textIndent = !textIndent">
           <Button
             :variant="textIndent ? 'secondary' : 'ghost'"
             size="icon-xs"
             class="text-muted-foreground hover:text-foreground"
-            @click="textIndent = !textIndent"
           >
             <ListIndentIncrease class="size-3.5" />
           </Button>
@@ -162,12 +167,11 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
 
       <!-- Justify toggle -->
       <Tooltip>
-        <TooltipTrigger as-child>
+        <TooltipTrigger as-child @click="justify = !justify">
           <Button
             :variant="justify ? 'secondary' : 'ghost'"
             size="icon-xs"
             class="text-muted-foreground hover:text-foreground"
-            @click="justify = !justify"
           >
             <component :is="justify ? TextAlignJustify : TextAlignStart" class="size-3.5" />
           </Button>
@@ -176,6 +180,20 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
       </Tooltip>
 
       <Separator orientation="vertical" class="mx-1 h-4" />
+
+      <!-- AI button -->
+      <Tooltip>
+        <TooltipTrigger as-child @click="emit('toggle-ai')">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="text-muted-foreground hover:text-foreground"
+          >
+            <Sparkles class="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">AI 写作助手</TooltipContent>
+      </Tooltip>
 
       <!-- Snippets dropdown -->
       <DropdownMenu>
@@ -193,8 +211,7 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
           <DropdownMenuItem
             v-for="s in SNIPPETS"
             :key="s.label"
-            @select.prevent="emit('insert', s.insert)"
-            @click="emit('insert', s.insert)"
+            @select="emit('insert', s.insert)"
           >
             {{ s.label }}
           </DropdownMenuItem>

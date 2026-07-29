@@ -62,6 +62,24 @@ export async function deleteTheme(id: string): Promise<void> {
   if (!res.ok) throw new Error(data.error || res.statusText)
 }
 
+export interface ThemePack {
+  id: string
+  name: string
+  description?: string
+  primary?: string
+  extends?: string
+  base?: string
+  preCode?: string
+  tags?: Record<string, string>
+}
+
+export async function getTheme(id: string): Promise<ThemePack> {
+  const res = await fetch(`/api/themes/get?id=${encodeURIComponent(id)}`)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data.theme as ThemePack
+}
+
 export function downloadText(filename: string, content: string, mime = 'text/html;charset=utf-8') {
   const blob = new Blob([content], { type: mime })
   const url = URL.createObjectURL(blob)
@@ -127,6 +145,7 @@ export async function createNote(note: Partial<DraftItem>): Promise<DraftItem> {
       publishStatus: note.publishStatus || 'none',
       mediaId: note.mediaId || '',
       publishedAt: note.publishedAt || 0,
+      type: note.type || 'article',
     }),
   })
   const data = await res.json()
@@ -352,4 +371,190 @@ export async function fetchBizArticles(fakeid: string, begin = 0, count = 10): P
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || res.statusText)
   return data as { total: number; articles: PublishedArticle[] }
+}
+
+// --- AI ---
+
+export interface AIConfig {
+  ai_base_url: string
+  ai_model: string
+  has_ai_key: boolean
+  ai_image_base_url: string
+  ai_image_model: string
+  has_ai_image_key: boolean
+}
+
+export async function getAIConfig(): Promise<AIConfig> {
+  const res = await fetch('/api/ai/config')
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data as AIConfig
+}
+
+export async function saveAIConfig(config: {
+  ai_base_url?: string; ai_api_key?: string; ai_model?: string;
+  ai_image_base_url?: string; ai_image_api_key?: string; ai_image_model?: string;
+}): Promise<void> {
+  const res = await fetch('/api/ai/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+}
+
+export async function generateImage(prompt: string, n = 1, size = '1024x1024'): Promise<{ data: { url: string }[] }> {
+  const res = await fetch('/api/ai/image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, n, size }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || data.error || res.statusText)
+  return data as { data: { url: string }[] }
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export function aiChatStream(
+  params: { messages: ChatMessage[]; currentContent: string; styleId?: string },
+  onToken: (token: string) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): () => void {
+  const controller = new AbortController()
+  fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal: controller.signal,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ error: res.statusText }))
+      onError(data.error || res.statusText)
+      return
+    }
+    const reader = res.body?.getReader()
+    if (!reader) { onError('Response body is not readable'); return }
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() || ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const raw = line.slice(6)
+          try {
+            const obj = JSON.parse(raw)
+            if (obj.done) {
+              onDone()
+              return
+            }
+            if (obj.token) onToken(obj.token)
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    }
+    onDone()
+  }).catch((e) => {
+    if (e.name !== 'AbortError') onError(e.message || String(e))
+  })
+  return () => controller.abort()
+}
+
+export interface WritingStyle {
+  id: string
+  name: string
+  fakeid: string
+  nickname: string
+  stylePrompt: string
+  sampleCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export async function analyzeStyle(fakeid: string, nickname: string): Promise<WritingStyle> {
+  const res = await fetch('/api/ai/analyze-style', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fakeid, nickname }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data.style as WritingStyle
+}
+
+export async function fetchWritingStyles(): Promise<WritingStyle[]> {
+  const res = await fetch('/api/ai/styles')
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return (data.styles || []) as WritingStyle[]
+}
+
+export async function deleteWritingStyle(id: string): Promise<void> {
+  const res = await fetch('/api/ai/styles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+}
+
+
+
+export function aiWriteStream(
+  params: { styleId: string; topic: string; outline?: string; length?: string },
+  onToken: (token: string) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): () => void {
+  const controller = new AbortController()
+  fetch('/api/ai/write', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal: controller.signal,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ error: res.statusText }))
+      onError(data.error || res.statusText)
+      return
+    }
+    const reader = res.body?.getReader()
+    if (!reader) { onError('Response body is not readable'); return }
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() || ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const raw = line.slice(6)
+          try {
+            const obj = JSON.parse(raw)
+            if (obj.done) {
+              onDone()
+              return
+            }
+            if (obj.token) onToken(obj.token)
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    }
+    onDone()
+  }).catch((err) => {
+    if (err.name !== 'AbortError') onError(err.message)
+  })
+  return () => controller.abort()
 }

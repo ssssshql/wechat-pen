@@ -1,22 +1,29 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, Loader2, Menu, Plus, Settings2, Sparkles, Trash2, Upload, X, ExternalLink, Copy, Download, RotateCcw, Image, Send } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, FileCode2, FolderOpen, Loader2, Plus, Sparkles, Trash2, X, ExternalLink, Copy, Download, RotateCcw, Image, Send, Palette, Settings2, BarChart3, LayoutGrid } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Toaster } from '@/components/ui/sonner'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import EditorToolbar from '@/components/EditorToolbar.vue'
 import MaterialBrowser from '@/components/MaterialBrowser.vue'
 import MpBrowser from '@/components/MpBrowser.vue'
-import SettingsPanel from '@/components/SettingsPanel.vue'
+import ThemeManager from '@/components/ThemeManager.vue'
+import AIAssistant from '@/components/AIAssistant.vue'
+import ImagePostEditor from '@/components/ImagePostEditor.vue'
+
+interface ImageSlot { url: string; mediaId?: string }
 import PreviewPanel from '@/components/PreviewPanel.vue'
-import { convertMarkdown, downloadText, importTheme, loadSettings, openMpGuide, saveSettings, addDraft, fetchMaterials, uploadMaterial, fetchNotes, createNote, updateNote, deleteNote, setActiveNote, migrateLocalDraftsIfNeeded, setNotePublishStatus } from '@/lib/api'
+import { convertMarkdown, downloadText, loadSettings, openMpGuide, saveSettings, addDraft, fetchMaterials, uploadMaterial, fetchNotes, createNote, updateNote, deleteNote, setActiveNote, migrateLocalDraftsIfNeeded, setNotePublishStatus, fetchWritingStyles, getAIConfig, saveAIConfig, deleteWritingStyle, type StyleOption, type WritingStyle } from '@/lib/api'
 import { SAMPLE_MD, STYLE_PRESETS, computeStats, PUBLISH_STATUS_LABEL, type DraftItem, type HighlightTheme, type MaterialItem, type PreviewShell, type PreviewWidth, type PublishStatus, type StylePack, type Theme } from '@/lib/types'
 
 const markdown = ref(SAMPLE_MD)
 const theme = ref<Theme>('wechat')
 const style = ref<StylePack>('simple')
 const title = ref('示例文章')
+const imagePostImages = ref<(ImageSlot | null)[]>([null, null, null, null])
 const primaryColor = ref('#07c160')
 const textIndent = ref(false)
 const justify = ref(true)
@@ -29,9 +36,67 @@ const status = ref('就绪')
 const view = ref<'preview' | 'html'>('preview')
 const copyMode = ref<'rich' | 'source'>('rich')
 const editorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
-const mobileSettings = ref(false)
+const toolbarRef = ref<InstanceType<typeof EditorToolbar> | null>(null)
+const themeListVersion = ref(0)
 const showMaterials = ref(false)
 const showMp = ref(false)
+const showAI = ref(false)
+const showAiConfig = ref(false)
+const showStyleDialog = ref(false)
+const aiStyles = ref<WritingStyle[]>([])
+const aiBaseUrl = ref('')
+const aiApiKey = ref('')
+const aiModel = ref('')
+const aiHasKey = ref(false)
+const aiImageBaseUrl = ref('')
+const aiImageApiKey = ref('')
+const aiImageModel = ref('')
+const aiHasImageKey = ref(false)
+
+async function loadAiStyles() {
+  try { aiStyles.value = await fetchWritingStyles() } catch { /* ignore */ }
+}
+
+async function loadAiConfig() {
+  try {
+    const cfg = await getAIConfig()
+    aiBaseUrl.value = cfg.ai_base_url || ''
+    aiModel.value = cfg.ai_model || ''
+    aiHasKey.value = cfg.has_ai_key
+    aiImageBaseUrl.value = cfg.ai_image_base_url || ''
+    aiImageModel.value = cfg.ai_image_model || ''
+    aiHasImageKey.value = cfg.has_ai_image_key
+  } catch { /* ignore */ }
+}
+
+async function saveAiSettings() {
+  try {
+    await saveAIConfig({
+      ai_base_url: aiBaseUrl.value.trim() || undefined,
+      ai_api_key: aiApiKey.value.trim() || undefined,
+      ai_model: aiModel.value.trim() || undefined,
+      ai_image_base_url: aiImageBaseUrl.value.trim() || undefined,
+      ai_image_api_key: aiImageApiKey.value.trim() || undefined,
+      ai_image_model: aiImageModel.value.trim() || undefined,
+    })
+    aiHasKey.value = true
+    aiApiKey.value = ''
+    aiHasImageKey.value = true
+    aiImageApiKey.value = ''
+    toast.success('AI 设置已保存')
+    showAiConfig.value = false
+  } catch (e: any) {
+    toast.error('保存失败: ' + e.message)
+  }
+}
+
+async function deleteAiStyle(id: string) {
+  try {
+    await deleteWritingStyle(id)
+    aiStyles.value = aiStyles.value.filter(s => s.id !== id)
+    toast.success('风格已删除')
+  } catch { toast.error('删除失败') }
+}
 const mpConnected = ref(false)
 const mpName = ref('')
 const mpAvatar = ref('')
@@ -118,7 +183,11 @@ function draftPickerNext() {
 const showDrafts = ref(false)
 const drafts = ref<DraftItem[]>([])
 const activeDraftId = ref<string | null>(null)
-const themeInput = ref<HTMLInputElement | null>(null)
+const activeDraftIsImagePost = computed(() => {
+  const d = drafts.value.find(d => d.id === activeDraftId.value)
+  return d?.type === 'image_post'
+})
+const showThemes = ref(false)
 const renamingId = ref<string | null>(null)
 const renameDraft = ref('')
 
@@ -173,7 +242,25 @@ function insertSnippet(text: string) {
     markdown.value = `${markdown.value || ''}${text}`
   }
   schedule()
-  mobileSettings.value = false
+}
+function handleAIInsert(text: string) {
+  insertSnippet(text)
+}
+
+function handleStreamStart() {
+  const ed = editorRef.value
+  ed?.startStreamInsert()
+}
+
+function handleStreamToken(token: string) {
+  const ed = editorRef.value
+  ed?.streamInsertToken(token)
+  schedule()
+}
+
+function handleStreamEnd() {
+  const ed = editorRef.value
+  ed?.endStreamInsert()
 }
 function onToolbar(action: string) {
   const ed = editorRef.value
@@ -248,20 +335,12 @@ async function cyclePublishStatus(id: string, e?: Event) {
   }
 }
 
-async function setPublishStatusManual(id: string, status: PublishStatus) {
-  const d = drafts.value.find((x) => x.id === id)
-  if (!d) return
-  try {
-    const n = await setNotePublishStatus(id, status, d.mediaId)
-    const idx = drafts.value.findIndex((x) => x.id === id)
-    if (idx >= 0) drafts.value[idx] = { ...drafts.value[idx], ...n }
-  } catch (err) {
-    toast.error(err instanceof Error ? err.message : '更新状态失败')
-  }
-}
-
 function noteSettings() {
-  return { style: style.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlightTheme: highlightTheme.value }
+  const base: Record<string, unknown> = { style: style.value, primaryColor: primaryColor.value, textIndent: textIndent.value, justify: justify.value, highlightTheme: highlightTheme.value }
+  if (activeDraftIsImagePost.value) {
+    base.images = imagePostImages.value
+  }
+  return base
 }
 
 async function persistActiveDraft() {
@@ -310,6 +389,13 @@ async function selectDraft(id: string) {
   markdown.value = d.markdown
   title.value = d.name || '未命名'
   if (d.settings) applySettings(d.settings as Record<string, unknown>)
+  // Load image post images from settings
+  const imgs = d.settings?.images
+  if (d.type === 'image_post' && Array.isArray(imgs) && imgs.length === 4) {
+    imagePostImages.value = imgs as (ImageSlot | null)[]
+  } else {
+    imagePostImages.value = [null, null, null, null]
+  }
   showDrafts.value = false
   schedule()
 }
@@ -357,12 +443,14 @@ function cancelRename() {
   renamingId.value = null
 }
 
-async function createDraft() {
+async function createDraft(type?: 'article' | 'image_post') {
   await persistActiveDraft()
   try {
+    const noteType = type || 'article'
     const n = await createNote({
-      name: `笔记 ${drafts.value.length + 1}`,
-      markdown: '# 新文章\n\n',
+      name: noteType === 'image_post' ? `贴图 ${drafts.value.length + 1}` : `笔记 ${drafts.value.length + 1}`,
+      markdown: noteType === 'image_post' ? '' : '# 新文章\n\n',
+      type: noteType,
     })
     drafts.value = [n, ...drafts.value]
     activeDraftId.value = n.id
@@ -396,7 +484,17 @@ async function deleteDraft(id: string) {
   }
   toast.message('已删除')
 }
-async function onThemeFile(e: Event) { const input = e.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return; try { const raw = await file.text(); const pack = JSON.parse(raw); const saved = await importTheme(pack); style.value = saved.id; if (saved.primary) primaryColor.value = saved.primary; schedule(); toast.success('已导入：' + saved.name) } catch (err) { toast.error(err instanceof Error ? err.message : '导入失败') }; input.value = '' }
+
+function onThemeApply(opt: StyleOption) {
+  style.value = opt.id
+  if (opt.primary) primaryColor.value = opt.primary
+  schedule()
+}
+function onThemesChanged() {
+  themeListVersion.value++
+  toolbarRef.value?.reloadStyles?.()
+  schedule()
+}
 function wrapSelection(before: string, after: string) { editorRef.value?.wrapSelection(before, after); schedule() }
 function onKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey
@@ -409,12 +507,15 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 watch([markdown, theme, style, title, primaryColor, textIndent, justify, highlightTheme], () => schedule())
+watch(showAiConfig, (val) => { if (val) loadAiConfig() })
 
 onMounted(async () => {
   const settings = loadSettings(currentSettings())
   applySettings(settings as Record<string, unknown>)
   window.addEventListener('keydown', onKeydown)
   checkMpStatus()
+  loadAiStyles()
+  loadAiConfig()
   try {
     const migrated = await migrateLocalDraftsIfNeeded()
     if (migrated > 0) toast.success(`已迁移 ${migrated} 条本地笔记到服务端`)
@@ -438,7 +539,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
     <!-- Header -->
     <header class="app-header z-20 shrink-0">
       <div class="flex h-10 items-center gap-1.5 px-3">
-        <Button variant="ghost" size="icon-xs" class="lg:hidden" @click="mobileSettings = true"><Menu class="size-3.5" /></Button>
         <div class="mr-1 flex min-w-0 items-center gap-1.5">
           <div class="brand-dot" />
           <div class="truncate text-sm font-semibold tracking-tight">wechat-pen</div>
@@ -446,10 +546,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
         <div class="ml-auto flex items-center gap-px">
           <Button variant="ghost" size="xs" class="inline-flex lg:hidden" @click="showDrafts = !showDrafts"><FolderOpen class="size-3.5 mr-1" />笔记</Button>
           <span class="mx-1.5 hidden w-px self-stretch bg-border sm:inline" />
-          <input ref="themeInput" type="file" accept="application/json,.json" class="hidden" @change="onThemeFile" />
-          <Button variant="ghost" size="xs" class="hidden lg:inline-flex" @click="themeInput?.click()">导入主题</Button>
+          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showThemes = !showThemes"><Palette class="size-3.5 mr-1" />主题管理</Button>
           <Button variant="ghost" size="xs" class="hidden md:inline-flex" @click="loadSample"><RotateCcw class="size-3.5 mr-1" />示例</Button>
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showMaterials = !showMaterials"><Image class="size-3.5 mr-1" />素材</Button>
+          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showAiConfig = true"><Settings2 class="size-3.5 mr-1" />AI</Button>
+          <Button variant="ghost" size="xs" class="hidden sm:inline-flex" @click="showStyleDialog = true"><BarChart3 class="size-3.5 mr-1" />风格</Button>
           <Button variant="ghost" size="xs" class="hidden sm:inline-flex gap-1.5" @click="showMp = !showMp" title="连接微信">
             <img v-if="mpConnected && mpAvatar" :src="mpAvatar" class="size-4 rounded-full object-cover" />
             <svg v-else viewBox="0 0 24 24" class="size-4" :fill="'#07c160'"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.11.24-.245 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-7.062-6.122zm-2.18 2.769c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982z" /></svg>
@@ -469,7 +570,15 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
       <div class="mb-2 flex items-center justify-between px-1.5">
         <span class="text-[11px] font-medium text-[#787774]">笔记</span>
         <div class="flex gap-0.5">
-          <button type="button" class="flex size-7 items-center justify-center rounded-md text-[#787774] hover:bg-black/[0.04] hover:text-[#2f3437]" title="新建" @click="createDraft"><Plus class="size-3.5" /></button>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <button type="button" class="flex size-7 items-center justify-center rounded-md text-[#787774] hover:bg-black/[0.04] hover:text-[#2f3437]" title="新建"><Plus class="size-3.5" /></button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="min-w-[120px]">
+              <DropdownMenuItem class="gap-2 text-xs" @click="createDraft()"><FileCode2 class="size-3.5" />新建文章</DropdownMenuItem>
+              <DropdownMenuItem class="gap-2 text-xs" @click="createDraft('image_post')"><LayoutGrid class="size-3.5" />新建贴图</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <button type="button" class="flex size-7 items-center justify-center rounded-md text-[#787774] hover:bg-black/[0.04]" @click="showDrafts = false"><X class="size-3.5" /></button>
         </div>
       </div>
@@ -526,14 +635,21 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
       <aside class="note-rail hidden w-[200px] shrink-0 flex-col border-r border-[#eaeaea] bg-[#fbfbfa] lg:flex">
         <div class="flex h-9 shrink-0 items-center gap-1 px-2.5">
           <span class="min-w-0 flex-1 text-[11px] font-medium tracking-[0.04em] text-[#787774]">笔记</span>
-          <button
-            type="button"
-            class="flex size-6 items-center justify-center rounded-md text-[#787774] transition-colors hover:bg-black/[0.05] hover:text-[#2f3437]"
-            title="新建笔记"
-            @click="createDraft"
-          >
-            <Plus class="size-3.5 stroke-[2]" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <button type="button" class="flex size-6 items-center justify-center rounded-md text-[#787774] transition-colors hover:bg-black/[0.05] hover:text-[#2f3437]" title="新建笔记">
+                <Plus class="size-3.5 stroke-[2]" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="min-w-[120px]">
+              <DropdownMenuItem class="gap-2 text-xs" @click="createDraft()">
+                <FileCode2 class="size-3.5" />新建文章
+              </DropdownMenuItem>
+              <DropdownMenuItem class="gap-2 text-xs" @click="createDraft('image_post')">
+                <LayoutGrid class="size-3.5" />新建贴图
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <div class="scroll-panel min-h-0 flex-1 px-1.5 pb-3">
           <div v-if="!drafts.length" class="px-2 py-10 text-center text-[11px] leading-relaxed text-[#a0a09a]">
@@ -561,6 +677,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
                 />
                 <template v-else>
                   <div class="flex min-w-0 items-center gap-1.5">
+                    <LayoutGrid v-if="d.type === 'image_post'" class="size-3.5 shrink-0 text-[#a0a09a]" />
+                    <FileCode2 v-else class="size-3.5 shrink-0 text-[#a0a09a]" />
                     <span class="truncate text-[12.5px] leading-5 font-medium text-[#2f3437]">{{ d.name || '未命名' }}</span>
                     <button
                       v-if="notePublishStatus(d) !== 'none'"
@@ -594,6 +712,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
             </li>
           </ul>
         </div>
+
       </aside>
 
       <section class="editor-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r">
@@ -601,8 +720,10 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
           <span class="flex items-center gap-1.5 font-medium tracking-wide"><FileCode2 class="size-3.5" />Markdown</span>
           <span class="tabular-nums">{{ stats.total }} 字 · {{ stats.readingMin }}分 <span v-if="stats.titleWarn" class="text-amber-500 ml-1">标题 {{ stats.titleLen }}字</span></span>
         </div>
-        <MarkdownEditor ref="editorRef" v-model="markdown" class="flex-1" />
-        <EditorToolbar v-model:style="style" v-model:highlight-theme="highlightTheme" v-model:text-indent="textIndent" v-model:justify="justify" @action="onToolbar" @insert="insertSnippet" @style-change="onStyleChange" @primary-color="onPrimaryColor" />
+        <MarkdownEditor v-if="!activeDraftIsImagePost" ref="editorRef" v-model="markdown" class="flex-1 min-h-0" />
+        <ImagePostEditor v-if="activeDraftIsImagePost" :title="title" :text="markdown" :images="imagePostImages" @update:title="title = $event" @update:text="markdown = $event" @update:images="imagePostImages = $event" class="flex-1 min-h-0" />
+        <EditorToolbar v-if="!activeDraftIsImagePost" ref="toolbarRef" :refresh-key="themeListVersion" :ai-active="showAI" v-model:style="style" v-model:highlight-theme="highlightTheme" v-model:text-indent="textIndent" v-model:justify="justify" @action="onToolbar" @insert="insertSnippet" @style-change="onStyleChange" @primary-color="onPrimaryColor" @toggle-ai="showAI = !showAI" />
+        <AIAssistant v-if="showAI && !activeDraftIsImagePost" v-model:show="showAI" v-model:editor-content="markdown" @stream-start="handleStreamStart" @stream-token="handleStreamToken" @stream-end="handleStreamEnd" @stream-cancel="handleStreamEnd" @insert="handleAIInsert" />
       </section>
 
       <section class="preview-pane flex min-h-0 w-[460px] shrink-0 flex-col overflow-hidden">
@@ -610,19 +731,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
       </section>
     </div>
 
-    <!-- Mobile settings -->
-    <div v-if="mobileSettings" class="fixed inset-0 z-40 bg-black/40 lg:hidden" @click.self="mobileSettings = false">
-      <div class="bg-background absolute inset-y-0 left-0 flex w-[min(100%,300px)] flex-col shadow-xl">
-        <div class="flex h-10 items-center justify-between border-b px-3"><div class="flex items-center gap-1.5 text-sm font-medium"><Settings2 class="size-4" />设置</div><Button size="icon-xs" variant="ghost" @click="mobileSettings = false"><X class="size-3.5" /></Button></div>
-        <div class="scroll-panel flex-1"><SettingsPanel v-model:style="style" v-model:primary-color="primaryColor" v-model:highlight-theme="highlightTheme" @style-change="onStyleChange" @insert="insertSnippet" /></div>
-      </div>
-    </div>
-
     <!-- Material browser -->
     <!-- (empty, moved after draft dialog) -->
 
     <!-- Draft dialog -->
-    <div v-if="showDraftDialog" class="fixed inset-0 z-40 flex items-center justify-center bg-black/40" @click.self="showDraftDialog = false">
+    <div v-if="showDraftDialog" class="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
       <div class="bg-background w-full max-w-md rounded-lg shadow-xl mx-4">
         <div class="flex items-center justify-between border-b px-4 py-3">
           <span class="text-sm font-medium">发布到草稿箱</span>
@@ -722,14 +835,27 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
       </div>
     </div>
 
+    <!-- Theme manager (modal) -->
+    <Teleport to="body">
+      <div v-if="showThemes" style="z-index:99999" class="fixed inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
+        <ThemeManager
+          :current-style="style"
+          @close="showThemes = false"
+          @apply="onThemeApply"
+          @changed="onThemesChanged"
+        />
+      </div>
+    </Teleport>
+
     <!-- Material browser (Teleport to body to escape all stacking contexts) -->
     <Teleport to="body">
-      <div v-if="showMaterials" style="z-index:99999" class="fixed inset-0" @click.self="showMaterials = false">
+      <div v-if="showMaterials" style="z-index:99999" class="fixed inset-0">
         <div class="bg-background absolute inset-y-0 right-0 flex w-[min(100%,420px)] flex-col shadow-xl border-l">
           <MaterialBrowser
             @insert="(text: string) => { insertSnippet(text); }"
             @close="showMaterials = false"
             @select-cover="(id: string) => { draftThumbMediaId = id; showMaterials = false }"
+            @style-analyzed="loadAiStyles"
           />
         </div>
       </div>
@@ -738,6 +864,85 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
     <!-- MP browser (Teleport) -->
     <Teleport to="body">
       <MpBrowser v-if="showMp" :open="showMp" @close="showMp = false" @login="checkMpStatus" />
+    </Teleport>
+
+    <!-- AI Config Dialog -->
+    <Teleport to="body">
+      <div v-if="showAiConfig" style="z-index:99999" class="fixed inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
+        <div class="bg-background w-full max-w-sm rounded-lg shadow-xl">
+          <div class="flex items-center justify-between border-b px-4 py-3">
+            <span class="text-sm font-medium">AI 配置</span>
+            <Button variant="ghost" size="icon-xs" @click="showAiConfig = false"><X class="size-3.5" /></Button>
+          </div>
+          <div class="space-y-4 px-4 py-4 overflow-y-auto max-h-[70vh]">
+            <!-- Chat config -->
+            <div class="space-y-2">
+              <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">对话生成</p>
+              <div>
+                <label class="text-xs font-medium text-muted-foreground">API Base URL</label>
+                <Input v-model="aiBaseUrl" class="h-8 text-xs mt-1" placeholder="https://api.openai.com/v1" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-muted-foreground">API Key {{ aiHasKey ? '(已配置)' : '(未配置)' }}</label>
+                <Input v-model="aiApiKey" type="password" class="h-8 text-xs mt-1" placeholder="sk-..." />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-muted-foreground">模型</label>
+                <Input v-model="aiModel" class="h-8 text-xs mt-1" placeholder="gpt-4o-mini" />
+              </div>
+            </div>
+            <!-- Image config -->
+            <div class="space-y-2 border-t pt-3">
+              <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">图像生成</p>
+              <div>
+                <label class="text-xs font-medium text-muted-foreground">API Base URL <span class="text-[10px] text-muted-foreground/60">(可选，默认复用对话 URL)</span></label>
+                <Input v-model="aiImageBaseUrl" class="h-8 text-xs mt-1" placeholder="同对话 URL" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-muted-foreground">API Key {{ aiHasImageKey ? '(已配置)' : '(未配置)' }} <span class="text-[10px] text-muted-foreground/60">(可选，默认复用对话 Key)</span></label>
+                <Input v-model="aiImageApiKey" type="password" class="h-8 text-xs mt-1" placeholder="同对话 Key" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-muted-foreground">模型</label>
+                <Input v-model="aiImageModel" class="h-8 text-xs mt-1" placeholder="dall-e-3" />
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end border-t px-4 py-3">
+            <Button size="sm" class="text-xs h-8" @click="saveAiSettings">保存</Button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Style Management Dialog -->
+    <Teleport to="body">
+      <div v-if="showStyleDialog" style="z-index:99999" class="fixed inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]" @click.self="showStyleDialog = false">
+        <div class="bg-background w-full max-w-md rounded-lg shadow-xl">
+          <div class="flex items-center justify-between border-b px-4 py-3">
+            <span class="text-sm font-medium">写作风格管理</span>
+            <Button variant="ghost" size="icon-xs" @click="showStyleDialog = false"><X class="size-3.5" /></Button>
+          </div>
+          <div class="px-4 py-4">
+            <div v-if="aiStyles.length" class="space-y-2">
+              <div v-for="s in aiStyles" :key="s.id" class="rounded-md border px-3 py-2">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-medium">{{ s.nickname }}</span>
+                  <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-red-500" @click="deleteAiStyle(s.id)">
+                    <Trash2 class="size-3.5" />
+                  </Button>
+                </div>
+                <div class="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground leading-relaxed bg-muted/50 rounded px-2 py-1.5">
+                  {{ s.stylePrompt }}
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-center text-sm text-muted-foreground py-8">
+              暂无风格，请在「连接微信」中搜索公众号提取
+            </div>
+          </div>
+        </div>
+      </div>
     </Teleport>
 
     <footer class="app-footer flex h-7 shrink-0 items-center gap-2 px-3 text-[11px]">
