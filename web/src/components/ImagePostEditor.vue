@@ -4,7 +4,7 @@ import { toast } from 'vue-sonner'
 import { Image, Loader2, Plus, Sparkles, X, Upload } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { generateImage, uploadMaterial } from '@/lib/api'
+import { generateImage } from '@/lib/api'
 
 interface ImageSlot {
   url: string
@@ -21,7 +21,7 @@ const emit = defineEmits<{
   'update:title': [value: string]
   'update:text': [value: string]
   'update:images': [value: (ImageSlot | null)[]]
-}>>()
+}>()
 
 const localTitle = ref(props.title)
 const localText = ref(props.text)
@@ -43,15 +43,27 @@ const aiPrompt = ref('')
 const aiGenerating = ref(false)
 const showAiInput = ref(false)
 
+const textCharCount = computed(() => [...localText.value].length)
+const filledCount = computed(() => localImages.value.filter(i => i?.url).length)
+
 const firstEmptySlot = computed(() => {
   for (let i = 0; i < localImages.value.length; i++) {
     if (!localImages.value[i]) return i
   }
-  return 0
+  return -1
 })
 
 function removeImage(index: number) {
   localImages.value[index] = null
+}
+
+function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function triggerUpload(index: number) {
@@ -63,10 +75,10 @@ function triggerUpload(index: number) {
     if (!file) return
     uploadingSlot.value = index
     try {
-      const result = await uploadMaterial(file)
-      localImages.value[index] = { url: result.url, mediaId: result.media_id }
+      const dataUrl = await readFileAsDataURL(file)
+      localImages.value[index] = { url: dataUrl }
     } catch (e: any) {
-      toast.error('上传失败: ' + (e.message || e))
+      toast.error('加载图片失败: ' + (e.message || e))
     } finally {
       uploadingSlot.value = -1
     }
@@ -75,7 +87,7 @@ function triggerUpload(index: number) {
 }
 
 async function aiGenerateForSlot(slot: number) {
-  if (!aiPrompt.value.trim()) return
+  if (slot < 0 || !aiPrompt.value.trim()) return
   aiGenerating.value = true
   try {
     const result = await generateImage(aiPrompt.value.trim())
@@ -93,61 +105,57 @@ async function aiGenerateForSlot(slot: number) {
 </script>
 
 <template>
-  <div class="flex flex-1 flex-col bg-[#fbfbfa]">
+  <div class="flex flex-1 flex-col bg-[#fbfbfa] overflow-hidden">
     <!-- Title -->
-    <div class="shrink-0 px-6 pt-4 pb-2">
+    <div class="shrink-0 px-5 pt-3 pb-1">
       <Input
         v-model="localTitle"
-        class="h-10 text-lg font-semibold border-transparent bg-transparent hover:border-[#eaeaea] focus:border-[#07c160]"
+        class="h-9 text-base font-semibold border-transparent bg-transparent hover:border-[#eaeaea] focus:border-[#07c160]"
         placeholder="贴图标题"
       />
     </div>
 
-    <!-- Image grid -->
-    <div class="shrink-0 px-6 pb-3">
-      <div class="grid grid-cols-2 gap-3">
+    <!-- Image strip -->
+    <div class="shrink-0 px-5 pb-2">
+      <div class="flex gap-2">
         <div
           v-for="(_, i) in 4"
           :key="i"
-          class="relative aspect-square rounded-lg border-2 overflow-hidden transition-colors group"
-          :class="localImages[i]?.url ? 'border-solid border-[#eaeaea]' : 'border-dashed border-[#ddd] hover:border-[#07c160] cursor-pointer'"
-          @click="!localImages[i]?.url && triggerUpload(i)"
+          class="relative w-[calc(25%-6px)] aspect-square shrink-0 rounded-lg overflow-hidden group cursor-pointer"
+          :class="localImages[i]?.url ? 'border border-[#eaeaea]' : ''"
+          @click="triggerUpload(i)"
         >
-          <!-- Has image -->
           <template v-if="localImages[i]?.url">
             <img :src="localImages[i]!.url" class="size-full object-cover" referrerpolicy="no-referrer" loading="lazy" />
-            <div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors">
-              <div class="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button variant="secondary" size="icon-xs" class="bg-white/90 hover:bg-white shadow-sm" @click.stop="triggerUpload(i)">
-                  <Upload class="size-3" />
-                </Button>
-                <Button variant="secondary" size="icon-xs" class="bg-white/90 hover:bg-white shadow-sm text-red-500" @click.stop="removeImage(i)">
-                  <X class="size-3" />
-                </Button>
-              </div>
+            <div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
+              <button type="button" class="flex size-6 items-center justify-center rounded bg-white/90 hover:bg-white shadow-sm" @click.stop="triggerUpload(i)" title="替换">
+                <Upload class="size-3" />
+              </button>
+              <button type="button" class="flex size-6 items-center justify-center rounded bg-white/90 hover:bg-white shadow-sm text-red-500" @click.stop="removeImage(i)" title="删除">
+                <X class="size-3" />
+              </button>
             </div>
           </template>
-          <!-- Loading -->
           <template v-else-if="uploadingSlot === i">
             <div class="flex size-full items-center justify-center bg-[#f5f5f5]">
-              <Loader2 class="size-6 animate-spin text-[#787774]" />
+              <Loader2 class="size-4 animate-spin text-[#787774]" />
             </div>
           </template>
-          <!-- Empty slot -->
           <template v-else>
-            <div class="flex size-full items-center justify-center bg-[#f8f8f7]">
-              <Plus class="size-8 text-[#bbb]" />
+            <div class="flex size-full items-center justify-center border-2 border-dashed border-[#ddd] rounded-lg bg-[#fafafa] hover:border-[#07c160] hover:bg-[#f0faf4] transition-colors">
+              <Plus class="size-5 text-[#ccc]" />
             </div>
           </template>
         </div>
       </div>
 
-      <!-- AI generate toggle -->
+      <!-- AI + info row -->
       <div class="mt-2 flex items-center gap-2">
         <Button variant="outline" size="xs" class="h-6 text-[10px] gap-1" @click="showAiInput = !showAiInput">
           <Sparkles class="size-3" />
           AI 生图
         </Button>
+        <span class="text-[10px] text-[#a0a09a]">{{ filledCount }}/4</span>
       </div>
       <div v-if="showAiInput" class="mt-1.5 flex gap-2">
         <Input v-model="aiPrompt" class="h-7 text-xs flex-1" placeholder="描述你想生成的图片..." @keydown.enter="aiGenerateForSlot(firstEmptySlot)" />
@@ -158,13 +166,19 @@ async function aiGenerateForSlot(slot: number) {
       </div>
     </div>
 
-    <!-- Text -->
-    <div class="flex-1 min-h-0 px-6 pb-4">
-      <textarea
-        v-model="localText"
-        class="w-full h-full resize-none rounded-lg border border-[#eaeaea] px-3 py-2 text-sm text-[#2f3437] bg-white outline-none focus:border-[#07c160] transition-colors placeholder:text-[#a0a09a]"
-        placeholder="补充说明文字（可选）..."
-      />
+    <!-- Text (main area) -->
+    <div class="flex-1 min-h-0 px-5 pb-4 pt-1">
+      <div class="relative h-full">
+        <textarea
+          v-model="localText"
+          maxlength="1000"
+          class="w-full h-full resize-none rounded-lg border border-[#eaeaea] px-3 py-2 text-sm text-[#2f3437] bg-white outline-none focus:border-[#07c160] transition-colors placeholder:text-[#a0a09a]"
+          placeholder="补充说明文字（不超过1000字）..."
+        />
+        <span class="absolute bottom-2 right-3 text-[10px] tabular-nums pointer-events-none" :class="textCharCount > 900 ? 'text-amber-500' : 'text-[#bbb]'">
+          {{ textCharCount }}/1000
+        </span>
+      </div>
     </div>
   </div>
 </template>

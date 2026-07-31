@@ -267,6 +267,10 @@ function onToolbar(action: string) {
   if (ed?.runToolbar) ed.runToolbar(action)
   schedule()
 }
+
+function toggleAI() {
+  showAI.value = !showAI.value
+}
 function downloadHTML() { if (!html.value) { toast.error('无内容'); return }; downloadText(`${(title.value || 'article').replace(/[\\/:*?"<>|]/g, '_')}.html`, html.value); toast.success('已下载') }
 
 async function copyHTML() {
@@ -722,8 +726,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown) })
         </div>
         <MarkdownEditor v-if="!activeDraftIsImagePost" ref="editorRef" v-model="markdown" class="flex-1 min-h-0" />
         <ImagePostEditor v-if="activeDraftIsImagePost" :title="title" :text="markdown" :images="imagePostImages" @update:title="title = $event" @update:text="markdown = $event" @update:images="imagePostImages = $event" class="flex-1 min-h-0" />
-        <EditorToolbar v-if="!activeDraftIsImagePost" ref="toolbarRef" :refresh-key="themeListVersion" :ai-active="showAI" v-model:style="style" v-model:highlight-theme="highlightTheme" v-model:text-indent="textIndent" v-model:justify="justify" @action="onToolbar" @insert="insertSnippet" @style-change="onStyleChange" @primary-color="onPrimaryColor" @toggle-ai="showAI = !showAI" />
-        <AIAssistant v-if="showAI && !activeDraftIsImagePost" v-model:show="showAI" v-model:editor-content="markdown" @stream-start="handleStreamStart" @stream-token="handleStreamToken" @stream-end="handleStreamEnd" @stream-cancel="handleStreamEnd" @insert="handleAIInsert" />
+        <EditorToolbar v-if="!activeDraftIsImagePost" ref="toolbarRef" :refresh-key="themeListVersion" :ai-active="showAI" v-model:style="style" v-model:highlight-theme="highlightTheme" v-model:text-indent="textIndent" v-model:justify="justify" @action="onToolbar" @insert="insertSnippet" @style-change="onStyleChange" @primary-color="onPrimaryColor" @toggle-ai="toggleAI" />
+      </section>
+
+      <section v-if="showAI && !activeDraftIsImagePost" class="flex min-h-0 w-[360px] shrink-0 overflow-hidden">
+        <AIAssistant v-model:editor-content="markdown" @stream-start="handleStreamStart" @stream-token="handleStreamToken" @stream-end="handleStreamEnd" @stream-cancel="handleStreamEnd" @insert="handleAIInsert" @close="showAI = false" />
       </section>
 
       <section class="preview-pane flex min-h-0 w-[460px] shrink-0 flex-col overflow-hidden">

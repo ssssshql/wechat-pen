@@ -12,7 +12,6 @@ type stylePack struct {
 }
 
 func (p stylePack) Paragraph(cfg Config) string {
-	// Prefer pack-specific paragraph template when present.
 	if tpl, ok := p.Tags["p"]; ok && strings.TrimSpace(tpl) != "" {
 		return applyParagraphTemplate(tpl, cfg)
 	}
@@ -53,20 +52,114 @@ func applyParagraphTemplate(tpl string, cfg Config) string {
 }
 
 func buildStylePack(cfg Config) stylePack {
-	// External theme pack from themes/*.json takes precedence when style id matches.
 	if pack, ok := GetExternalTheme(string(cfg.Style)); ok {
 		return packFromExternal(cfg, pack)
 	}
 	return builtinPack(cfg)
 }
 
-// ---------- 简约：干净留白 + 优雅排版 ----------
+// h1Template builds a chapter-style h1 using the {{content}} template system.
+func h1Template(accent, label, numColor, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="margin:32px 0 24px;padding-left:16px;border-left:4px solid %s;">`+
+			`<p style="margin:0 0 4px;font-size:11px;font-weight:600;color:%s;letter-spacing:2.4px;text-transform:uppercase;line-height:1;">%s {{num}}</p>`+
+			`<strong style="display:block;font-size:48px;line-height:1;color:%s;letter-spacing:-2px;opacity:0.18;font-weight:800;">{{num}}</strong>`+
+			`<strong style="display:block;font-size:26px;font-weight:800;color:%s;line-height:1.3;letter-spacing:-0.5px;margin-top:-40px;">{{content}}</strong>`+
+			`</section>`,
+		accent, accent, label, numColor, titleColor,
+	)
+}
+
+// h1Centered builds a centered chapter-style h1 with a horizontal rule divider.
+func h1Centered(ruleColor, label, numColor, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="margin:36px 0 24px;text-align:center;">`+
+			`<p style="margin:0 0 10px;font-size:10px;font-weight:700;color:%s;letter-spacing:3px;text-transform:uppercase;">%s {{num}}</p>`+
+			`<section style="display:flex;align-items:center;margin:0 0 16px;"><section style="flex:1;border-top:1px solid %s;"></section><span style="margin:0 12px;font-size:20px;color:%s;opacity:0.3;">{{num}}</span><section style="flex:1;border-top:1px solid %s;"></section></section>`+
+			`<strong style="display:block;font-size:28px;font-weight:800;color:%s;line-height:1.3;letter-spacing:0.06em;">{{content}}</strong>`+
+			`</section>`,
+		ruleColor, label, ruleColor, numColor, ruleColor, titleColor,
+	)
+}
+
+// h1BigNum builds a style with a large background watermark number.
+func h1BigNum(numColor, label, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="margin:36px 0 24px;">`+
+			`<section style="display:flex;align-items:center;padding-bottom:12px;">`+
+			`<span style="font-size:10px;font-weight:800;color:%s;letter-spacing:2.6px;text-transform:uppercase;">%s {{num}}</span>`+
+			`<section style="flex:1 1 0%%;border-top:1px solid #e5e7eb;margin:0 0 0 12px;height:0;"></section>`+
+			`</section>`+
+			`<section style="position:relative;">`+
+			`<strong style="display:block;font-size:60px;line-height:1;color:%s;letter-spacing:-3px;white-space:nowrap;opacity:0.25;">{{num}}</strong>`+
+			`<strong style="display:block;font-size:30px;font-weight:900;color:%s;line-height:1.26;letter-spacing:-0.8px;margin-top:-60px;margin-left:50px;word-break:break-all;">{{content}}</strong>`+
+			`</section></section>`,
+		numColor, label, numColor, titleColor,
+	)
+}
+
+// h2AccentBar builds a left-accent-bar h2 with a small color block.
+func h2AccentBar(accent, bgColor, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="display:flex;align-items:stretch;margin:1.5em 0 0.7em;gap:12px;">`+
+			`<section style="flex-shrink:0;width:4px;background:%s;border-radius:2px;"></section>`+
+			`<section style="flex:1;padding:10px 0 10px 4px;">`+
+			`<strong style="display:block;font-size:18px;font-weight:700;color:#%s;line-height:1.4;letter-spacing:0.04em;">{{content}}</strong>`+
+			`</section></section>`,
+		accent, titleColor,
+	)
+}
+
+// h2Centered builds a centered h2 with decorative lines.
+func h2Centered(lineColor, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="display:flex;align-items:center;margin:2em 0 0.9em;gap:16px;">`+
+			`<section style="flex:1;height:0;border-top:1px solid %s;"></section>`+
+			`<strong style="display:block;font-size:18px;font-weight:700;color:#%s;line-height:1.35;text-align:center;letter-spacing:0.12em;white-space:nowrap;">{{content}}</strong>`+
+			`<section style="flex:1;height:0;border-top:1px solid %s;"></section>`+
+			`</section>`,
+		lineColor, titleColor, lineColor,
+	)
+}
+
+// h2Pill builds a rounded pill/badge h2.
+func h2Pill(bgColor, textColor string) string {
+	return fmt.Sprintf(
+		`<section style="margin:1.5em 0 0.8em;">`+
+			`<strong style="display:inline-block;font-size:16px;font-weight:700;color:%s;line-height:1.4;padding:6px 16px;background:%s;border-radius:999px;letter-spacing:0.02em;">{{content}}</strong>`+
+			`</section>`,
+		textColor, bgColor,
+	)
+}
+
+// h2Card builds a card-style h2 with border and background.
+func h2Card(borderColor, bgColor, accent, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="margin:1.5em 0 0.8em;padding:12px 16px;background:%s;border:1px solid %s;border-left:4px solid %s;border-radius:8px;">`+
+			`<strong style="display:block;font-size:17px;font-weight:700;color:#%s;line-height:1.35;">{{content}}</strong>`+
+			`</section>`,
+		bgColor, borderColor, accent, titleColor,
+	)
+}
+
+// h2Glow builds a glowing accent-bar h2 (for dark theme).
+func h2Glow(accent, titleColor string) string {
+	return fmt.Sprintf(
+		`<section style="display:flex;align-items:center;margin:1.4em 0 0.7em;gap:12px;">`+
+			`<section style="flex-shrink:0;width:3px;height:22px;background:%s;border-radius:2px;box-shadow:0 0 8px %s60;"></section>`+
+			`<strong style="display:block;font-size:18px;font-weight:800;color:%s;line-height:1.35;">{{content}}</strong>`+
+			`</section>`,
+		accent, accent, titleColor,
+	)
+}
+
+// ---------- 简约：干净留白 + 左侧色条章节号 ----------
 func simplePack(primary string) stylePack {
 	return stylePack{
 		Base:    `margin:0 auto;padding:0 4px;max-width:677px;font-size:16px;color:#2c2c2c;line-height:1.75;letter-spacing:0.025em;word-wrap:break-word;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei",Arial,sans-serif;text-align:justify;`,
 		PreCode: `display:block;font-family:"JetBrains Mono","Fira Code",Consolas,Monaco,"Courier New",monospace;font-size:13.5px;color:#2c2c2c;background:transparent;padding:0;margin:0;border-radius:0;white-space:pre;word-break:normal;word-wrap:normal;`,
 		Tags: map[string]string{
-			"h1":         `display:block;font-size:22px;font-weight:700;color:#1a1a1a;line-height:1.4;margin:1.4em 0 0.7em;text-align:center;letter-spacing:0.06em;`,
+			"h1":         h1Template("{{primary}}", "SECTION", "#94a3b8", "#1a1a1a"),
 			"h2":         `display:block;font-size:18px;font-weight:700;color:#1a1a1a;line-height:1.4;margin:1.5em 0 0.65em;padding-bottom:0.35em;border-bottom:2px solid {{primary}};letter-spacing:0.04em;`,
 			"h3":         `display:block;font-size:17px;font-weight:600;color:#1a1a1a;line-height:1.4;margin:1.3em 0 0.55em;`,
 			"h4":         `display:block;font-size:16px;font-weight:600;color:#333;line-height:1.4;margin:1.2em 0 0.5em;`,
@@ -100,13 +193,19 @@ func simplePack(primary string) stylePack {
 	}
 }
 
-// ---------- 杂志：全居中衬线 + 装饰分割线 + 无边框引用 ----------
+// ---------- 杂志：全居中衬线 + 对称分割线章节标题 ----------
 func magazinePack(primary string) stylePack {
 	p := simplePack(primary)
 	p.Base = `margin:0 auto;padding:8px 12px;max-width:640px;font-size:16px;color:#2a2a2a;line-height:1.8;letter-spacing:0.06em;word-wrap:break-word;font-family:Georgia,"Songti SC",SimSun,"Times New Roman",serif;text-align:justify;`
-	// Full structural overrides
-	p.Tags["h1"] = `display:block;font-size:26px;font-weight:700;color:#111;line-height:1.3;margin:1.8em 0 0.4em;text-align:center;letter-spacing:0.18em;`
-	p.Tags["h2"] = `display:block;font-size:18px;font-weight:700;color:#111;line-height:1.35;margin:2em 0 0.9em;text-align:center;letter-spacing:0.12em;`
+	p.Tags["h1"] = h1Centered("{{primary}}", "CHAPTER", "#94a3b8", "#111")
+	p.Tags["h2"] = fmt.Sprintf(
+		`<section style="display:flex;align-items:center;margin:2em 0 0.9em;gap:16px;">`+
+			`<section style="flex:1;height:0;border-top:1px solid %s;"></section>`+
+			`<strong style="display:block;font-size:18px;font-weight:700;color:#111;line-height:1.35;text-align:center;letter-spacing:0.12em;white-space:nowrap;">{{content}}</strong>`+
+			`<section style="flex:1;height:0;border-top:1px solid %s;"></section>`+
+			`</section>`,
+		"{{primary}}", "{{primary}}",
+	)
 	p.Tags["h3"] = `display:block;font-size:15px;font-weight:700;color:{{primary}};line-height:1.4;margin:1.6em 0 0.7em;text-align:center;letter-spacing:0.2em;text-transform:uppercase;`
 	p.Tags["p"] = `display:block;margin:0 0 1.2em;font-size:16px;color:#2a2a2a;line-height:1.8;letter-spacing:0.05em;text-align:{{align}};{{indent}}`
 	p.Tags["blockquote"] = `display:block;margin:1.6em 1.5em;padding:1em 0;color:#666;background:transparent;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:15px;line-height:1.9;font-style:italic;text-align:center;`
@@ -124,12 +223,24 @@ func magazinePack(primary string) stylePack {
 	return p
 }
 
-// ---------- 科技：左对齐骨架 + 暗底代码 + 胶囊标签感 ----------
+// ---------- 科技：代码标签风格章节标题 ----------
 func techPack(primary string) stylePack {
 	p := simplePack(primary)
 	p.Base = `margin:0 auto;padding:0 2px;max-width:700px;font-size:15px;color:#0f172a;line-height:1.7;letter-spacing:0.01em;word-wrap:break-word;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",PingFang SC,Microsoft YaHei,sans-serif;text-align:left;`
-	p.Tags["h1"] = `display:block;font-size:24px;font-weight:800;color:#0f172a;line-height:1.25;margin:1.2em 0 0.7em;text-align:left;padding:0 0 0.45em;border-bottom:3px solid {{primary}};letter-spacing:-0.01em;`
-	p.Tags["h2"] = `display:flex;align-items:center;font-size:18px;font-weight:800;color:#0f172a;line-height:1.3;margin:1.5em 0 0.7em;padding:8px 12px;background:linear-gradient(90deg,rgba(59,130,246,0.12),transparent);border-left:4px solid {{primary}};border-radius:0 8px 8px 0;`
+	p.Tags["h1"] = fmt.Sprintf(
+		`<section style="margin:32px 0 20px;padding:16px 20px;background:linear-gradient(135deg,#f0f9ff,#f8fafc);border:1px solid #e0f2fe;border-radius:12px;">`+
+			`<p style="margin:0 0 6px;font-size:11px;font-weight:700;color:%s;letter-spacing:1.5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">SECTION {{num}}</p>`+
+			`<strong style="display:block;font-size:26px;font-weight:800;color:#0f172a;line-height:1.25;letter-spacing:-0.02em;">{{content}}</strong>`+
+			`<section style="margin-top:10px;height:3px;width:48px;background:%s;border-radius:2px;"></section>`+
+			`</section>`,
+		"{{primary}}", "{{primary}}",
+	)
+	p.Tags["h2"] = fmt.Sprintf(
+		`<section style="display:flex;align-items:center;margin:1.5em 0 0.7em;gap:10px;padding:10px 14px;background:linear-gradient(90deg,rgba(59,130,246,0.12),transparent);border-left:4px solid %s;border-radius:0 10px 10px 0;">`+
+			`<strong style="display:block;font-size:18px;font-weight:800;color:#0f172a;line-height:1.3;">{{content}}</strong>`+
+			`</section>`,
+		"{{primary}}",
+	)
 	p.Tags["h3"] = `display:block;font-size:16px;font-weight:700;color:#1e293b;line-height:1.35;margin:1.2em 0 0.5em;padding-left:0;border-bottom:1px dashed #cbd5e1;padding-bottom:0.25em;`
 	p.Tags["p"] = `display:block;margin:0 0 0.8em;font-size:15px;color:#1e293b;line-height:1.7;letter-spacing:0.01em;text-align:{{align}};{{indent}}`
 	p.Tags["ul"] = `display:block;margin:0 0 1em;padding:12px 12px 12px 1.6em;list-style-type:square;color:#0f172a;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;`
@@ -147,12 +258,24 @@ func techPack(primary string) stylePack {
 	return p
 }
 
-// ---------- 暖色：卡片式段落感 + 虚线装饰 + 软阴影图片 ----------
+// ---------- 暖色：圆角卡片章节标题 + 温暖色调 ----------
 func warmPack(primary string) stylePack {
 	p := simplePack(primary)
 	p.Base = `margin:0 auto;padding:6px 2px;max-width:677px;font-size:16px;color:#44403c;line-height:1.75;letter-spacing:0.04em;word-wrap:break-word;font-family:PingFang SC,Hiragino Sans GB,Microsoft YaHei,serif;text-align:justify;`
-	p.Tags["h1"] = `display:block;font-size:23px;font-weight:800;color:#78350f;line-height:1.35;margin:1.4em 0 0.8em;text-align:center;padding:0.55em 0.4em;background:linear-gradient(180deg,#fff7ed,transparent);border-radius:16px;`
-	p.Tags["h2"] = `display:block;font-size:18px;font-weight:800;color:#92400e;line-height:1.4;margin:1.5em 0 0.75em;text-align:center;padding-bottom:0.45em;border-bottom:2px dashed {{primary}};`
+	p.Tags["h1"] = fmt.Sprintf(
+		`<section style="margin:32px 0 24px;padding:20px 24px;background:linear-gradient(135deg,#fff7ed,#fef3c7);border-radius:20px;border:1px solid #fde68a;">`+
+			`<p style="margin:0 0 4px;font-size:10px;font-weight:700;color:%s;letter-spacing:2.5px;text-transform:uppercase;">%s {{num}}</p>`+
+			`<strong style="display:block;font-size:26px;font-weight:800;color:#78350f;line-height:1.35;letter-spacing:-0.01em;">{{content}}</strong>`+
+			`</section>`,
+		"{{primary}}", "CHAPTER",
+	)
+	p.Tags["h2"] = fmt.Sprintf(
+		`<section style="display:flex;align-items:center;margin:1.5em 0 0.75em;gap:10px;">`+
+			`<section style="flex-shrink:0;width:28px;height:28px;background:%s;border-radius:8px;line-height:28px;text-align:center;"><span style="font-size:12px;color:#fff;">{{num}}</span></section>`+
+			`<strong style="display:block;font-size:18px;font-weight:800;color:#92400e;line-height:1.4;">{{content}}</strong>`+
+			`</section>`,
+		"{{primary}}",
+	)
 	p.Tags["h3"] = `display:inline-block;font-size:16px;font-weight:700;color:#b45309;line-height:1.4;margin:1.2em 0 0.55em;padding:4px 12px;background:#ffedd5;border-radius:999px;`
 	p.Tags["p"] = `display:block;margin:0 0 1em;font-size:16px;color:#44403c;line-height:1.75;letter-spacing:0.04em;text-align:{{align}};{{indent}}`
 	p.Tags["blockquote"] = `display:block;margin:1.1em 0;padding:14px 16px;color:#78716c;background:#fff7ed;border:1px solid #fed7aa;border-left:6px solid {{primary}};font-size:15px;line-height:1.8;border-radius:14px;`
@@ -169,165 +292,12 @@ func warmPack(primary string) stylePack {
 	return p
 }
 
-// ---------- 暗黑：整页深色阅读卡（注意公众号白底外的兼容） ----------
-func darkPack(primary string) stylePack {
-	p := simplePack(primary)
-	// Use padded card so dark bg is visible as an article card
-	p.Base = `margin:0 auto;padding:18px 16px 28px;max-width:677px;font-size:15px;color:#e5e7eb;line-height:1.7;letter-spacing:0.02em;word-wrap:break-word;font-family:-apple-system,BlinkMacSystemFont,Helvetica Neue,PingFang SC,Microsoft YaHei,sans-serif;text-align:left;background:#0b1220;border-radius:16px;`
-	p.Tags["h1"] = `display:block;font-size:24px;font-weight:800;color:#f8fafc;line-height:1.3;margin:0.8em 0 0.8em;text-align:left;padding-bottom:0.45em;border-bottom:1px solid #1f2937;`
-	p.Tags["h2"] = `display:block;font-size:18px;font-weight:800;color:#f8fafc;line-height:1.35;margin:1.4em 0 0.7em;padding:8px 0 8px 12px;border-left:3px solid {{primary}};background:linear-gradient(90deg,rgba(88,166,255,.12),transparent);`
-	p.Tags["h3"] = `display:block;font-size:16px;font-weight:700;color:#cbd5e1;line-height:1.4;margin:1.2em 0 0.5em;`
-	p.Tags["p"] = `display:block;margin:0 0 0.9em;font-size:15px;color:#d1d5db;line-height:1.7;letter-spacing:0.02em;text-align:{{align}};{{indent}}`
-	p.Tags["strong"] = `font-weight:700;color:#f8fafc;background:linear-gradient(180deg,transparent 60%,rgba(88,166,255,.35) 60%);`
-	p.Tags["b"] = `font-weight:700;color:#f8fafc;`
-	p.Tags["a"] = `color:#58a6ff;text-decoration:none;border-bottom:1px solid rgba(88,166,255,.35);`
-	p.Tags["ul"] = `display:block;margin:0 0 1em;padding:0 0 0 1.25em;list-style-type:disc;color:#d1d5db;`
-	p.Tags["ol"] = `display:block;margin:0 0 1em;padding:0 0 0 1.25em;list-style-type:decimal;color:#d1d5db;`
-	p.Tags["li"] = `display:list-item;margin:0.4em 0;line-height:1.75;`
-	p.Tags["blockquote"] = `display:block;margin:1em 0;padding:12px 14px;color:#94a3b8;background:#111827;border:1px solid #1f2937;border-left:4px solid {{primary}};font-size:14.5px;line-height:1.7;border-radius:0 10px 10px 0;`
-	p.Tags["code"] = `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;color:#f97583;background:#1f2937;padding:2px 6px;border-radius:6px;`
-	p.Tags["pre"] = `display:block;margin:1em 0;padding:14px 16px;background:#020617;border-radius:12px;border:1px solid #1f2937;overflow-x:auto;line-height:1.55;font-size:13px;color:#e5e7eb;white-space:pre;`
-	p.Tags["hr"] = `display:block;border:none;border-top:1px solid #1f2937;margin:1.8em 0;height:1px;`
-	p.Tags["table"] = `display:table;border-collapse:collapse;width:100%;margin:1em 0;font-size:13.5px;`
-	p.Tags["th"] = `border:1px solid #1f2937;padding:9px 11px;background:#111827;font-weight:700;text-align:left;color:#f8fafc;`
-	p.Tags["td"] = `border:1px solid #1f2937;padding:9px 11px;color:#d1d5db;`
-	p.Tags["img"] = `display:block;max-width:100%;height:auto;margin:1.1em auto;border-radius:10px;border:1px solid #1f2937;opacity:0.95;`
-	p.Tags["figcaption"] = `display:block;margin-top:0.5em;font-size:12px;color:#64748b;line-height:1.5;text-align:center;`
-	p.PreCode = `display:block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;color:#e5e7eb;background:transparent;padding:0;margin:0;border-radius:0;white-space:pre;word-break:normal;word-wrap:normal;`
-	return p
-}
-
-// ---------- 清新：数字角标式 h2 + 浅底清单 ----------
-func freshPack(primary string) stylePack {
-	p := simplePack(primary)
-	p.Base = `margin:0 auto;padding:0 2px;max-width:677px;font-size:16px;color:#1f2937;line-height:1.75;letter-spacing:0.02em;word-wrap:break-word;font-family:-apple-system,BlinkMacSystemFont,Helvetica Neue,PingFang SC,sans-serif;text-align:justify;`
-	p.Tags["h1"] = `display:block;font-size:24px;font-weight:800;color:#065f46;line-height:1.3;margin:1.3em 0 0.7em;text-align:center;`
-	p.Tags["h2"] = `display:block;font-size:17px;font-weight:800;color:#fff;line-height:1.35;margin:1.5em 0 0.8em;padding:10px 14px;background:{{primary}};border-radius:12px;text-align:left;box-shadow:0 8px 18px rgba(5,150,105,.18);`
-	p.Tags["h3"] = `display:block;font-size:16px;font-weight:700;color:#047857;line-height:1.4;margin:1.2em 0 0.5em;padding-left:10px;border-left:3px solid #6ee7b7;`
-	p.Tags["p"] = `display:block;margin:0 0 1em;font-size:16px;color:#334155;line-height:1.75;letter-spacing:0.02em;text-align:{{align}};{{indent}}`
-	p.Tags["blockquote"] = `display:block;margin:1em 0;padding:0;color:#065f46;background:transparent;border:none;font-size:15px;line-height:1.8;text-align:center;font-style:italic;`
-	p.Tags["ul"] = `display:block;margin:0 0 1em;padding:12px 14px 12px 1.5em;list-style-type:disc;color:#1f2937;background:#ecfdf5;border-radius:14px;`
-	p.Tags["ol"] = `display:block;margin:0 0 1em;padding:12px 14px 12px 1.5em;list-style-type:decimal;color:#1f2937;background:#ecfdf5;border-radius:14px;`
-	p.Tags["li"] = `display:list-item;margin:0.4em 0;line-height:1.75;`
-	p.Tags["code"] = `font-family:Consolas,Monaco,Courier New,monospace;font-size:13.5px;color:#047857;background:#d1fae5;padding:2px 6px;border-radius:6px;`
-	p.Tags["pre"] = `display:block;margin:1em 0;padding:14px 16px;background:#f0fdf4;border-radius:14px;border:1px solid #a7f3d0;overflow-x:auto;line-height:1.55;font-size:13px;white-space:pre;`
-	p.Tags["hr"] = `display:block;border:none;margin:2em auto;height:8px;width:80px;background:linear-gradient(90deg,#6ee7b7,{{primary}},#6ee7b7);border-radius:999px;`
-	p.Tags["img"] = `display:block;max-width:100%;height:auto;margin:1.1em auto;border-radius:18px;`
-	p.Tags["table"] = `display:table;border-collapse:separate;border-spacing:0;width:100%;margin:1em 0;font-size:14px;overflow:hidden;border-radius:12px;border:1px solid #a7f3d0;`
-	p.Tags["th"] = `border:none;padding:10px 12px;background:#059669;font-weight:700;text-align:left;color:#fff;`
-	p.Tags["td"] = `border:none;border-top:1px solid #d1fae5;padding:10px 12px;color:#334155;background:#f0fdf4;`
-	return p
-}
-
-// ---------- 粉色：对话气泡式引用 + 圆角软卡片 ----------
-func pinkPack(primary string) stylePack {
-	p := simplePack(primary)
-	p.Base = `margin:0 auto;padding:4px 2px;max-width:677px;font-size:16px;color:#4a3347;line-height:1.8;letter-spacing:0.03em;word-wrap:break-word;font-family:PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif;text-align:justify;`
-	p.Tags["h1"] = `display:block;font-size:24px;font-weight:800;color:#9d174d;line-height:1.3;margin:1.3em 0 0.6em;text-align:center;`
-	p.Tags["h2"] = `display:block;font-size:18px;font-weight:800;color:#9d174d;line-height:1.35;margin:1.5em 0 0.8em;text-align:center;position:relative;`
-	p.Tags["h3"] = `display:block;font-size:16px;font-weight:700;color:#be185d;line-height:1.4;margin:1.2em 0 0.5em;text-align:left;padding-bottom:0.2em;border-bottom:2px dotted #f9a8d4;`
-	p.Tags["p"] = `display:block;margin:0 0 1em;font-size:16px;color:#4a3347;line-height:1.8;letter-spacing:0.03em;text-align:{{align}};{{indent}}`
-	p.Tags["strong"] = `font-weight:800;color:#9d174d;`
-	p.Tags["b"] = `font-weight:800;color:#9d174d;`
-	p.Tags["blockquote"] = `display:block;margin:1.1em 0 1.1em 0.4em;padding:14px 16px;color:#6b4c5e;background:#fdf2f8;border:none;font-size:15px;line-height:1.8;border-radius:18px 18px 18px 4px;box-shadow:0 6px 16px rgba(236,72,153,.10);`
-	p.Tags["ul"] = `display:block;margin:0 0 1em;padding:0;list-style-type:none;color:#4a3347;`
-	p.Tags["ol"] = `display:block;margin:0 0 1em;padding:0 0 0 1.2em;list-style-type:decimal;color:#4a3347;`
-	p.Tags["li"] = `display:list-item;margin:0.45em 0;line-height:1.8;padding:8px 12px;background:#fdf2f8;border-radius:12px;`
-	p.Tags["code"] = `font-family:Consolas,Monaco,Courier New,monospace;font-size:13.5px;color:#be185d;background:#fce7f3;padding:2px 7px;border-radius:999px;`
-	p.Tags["pre"] = `display:block;margin:1em 0;padding:14px 16px;background:#fdf2f8;border-radius:16px;border:1px solid #fbcfe8;overflow-x:auto;line-height:1.55;font-size:13px;white-space:pre;`
-	p.Tags["hr"] = `display:block;border:none;margin:2em auto;height:0;width:40%;border-top:1px solid #f9a8d4;`
-	p.Tags["img"] = `display:block;max-width:100%;height:auto;margin:1.1em auto;border-radius:20px;box-shadow:0 10px 24px rgba(236,72,153,.12);`
-	p.Tags["table"] = `display:table;border-collapse:separate;border-spacing:0;width:100%;margin:1em 0;font-size:14px;border-radius:14px;overflow:hidden;border:1px solid #fbcfe8;`
-	p.Tags["th"] = `border:none;padding:10px 12px;background:#f472b6;font-weight:700;text-align:left;color:#fff;`
-	p.Tags["td"] = `border:none;border-top:1px solid #fce7f3;padding:10px 12px;color:#4a3347;background:#fff;`
-	return p
-}
-
-// ---------- 极简灰：等宽正文 + 无装饰线稿感 ----------
-func monoPack(primary string) stylePack {
-	_ = primary
-	p := simplePack(primary)
-	p.Base = `margin:0 auto;padding:0;max-width:640px;font-size:14.5px;color:#111827;line-height:1.65;letter-spacing:0;word-wrap:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Cascadia Mono",monospace;text-align:left;`
-	p.Tags["h1"] = `display:block;font-size:20px;font-weight:700;color:#111827;line-height:1.35;margin:1.8em 0 1em;text-align:left;text-transform:uppercase;letter-spacing:0.14em;border-bottom:1px solid #111827;padding-bottom:0.4em;`
-	p.Tags["h2"] = `display:block;font-size:15px;font-weight:700;color:#111827;line-height:1.4;margin:1.8em 0 0.7em;text-align:left;letter-spacing:0.08em;`
-	p.Tags["h3"] = `display:block;font-size:14px;font-weight:700;color:#374151;line-height:1.4;margin:1.3em 0 0.5em;text-align:left;`
-	p.Tags["p"] = `display:block;margin:0 0 0.8em;font-size:14.5px;color:#1f2937;line-height:1.65;letter-spacing:0;text-align:{{align}};{{indent}}`
-	p.Tags["blockquote"] = `display:block;margin:1.1em 0;padding:0 0 0 1em;color:#6b7280;background:transparent;border-left:2px solid #9ca3af;font-size:13.5px;line-height:1.75;font-style:normal;`
-	p.Tags["ul"] = `display:block;margin:0 0 1em;padding:0 0 0 1.1em;list-style-type:"-  ";color:#111827;`
-	p.Tags["ol"] = `display:block;margin:0 0 1em;padding:0 0 0 1.3em;list-style-type:decimal;color:#111827;`
-	p.Tags["li"] = `display:list-item;margin:0.3em 0;line-height:1.7;`
-	p.Tags["code"] = `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#111827;background:#f3f4f6;padding:0 4px;border-radius:0;border-bottom:1px solid #d1d5db;`
-	p.Tags["pre"] = `display:block;margin:1em 0;padding:12px 14px;background:#f9fafb;border-radius:0;border:1px solid #e5e7eb;overflow-x:auto;line-height:1.55;font-size:12.5px;white-space:pre;`
-	p.Tags["hr"] = `display:block;border:none;border-top:1px solid #111827;margin:2em 0;height:1px;width:100%;`
-	p.Tags["a"] = `color:#111827;text-decoration:underline;text-underline-offset:3px;`
-	p.Tags["img"] = `display:block;max-width:100%;height:auto;margin:1.2em auto;border-radius:0;border:1px solid #e5e7eb;filter:grayscale(100%);`
-	p.Tags["table"] = `display:table;border-collapse:collapse;width:100%;margin:1em 0;font-size:12.5px;`
-	p.Tags["th"] = `border:1px solid #111827;padding:8px 10px;background:#fff;font-weight:700;text-align:left;color:#111827;`
-	p.Tags["td"] = `border:1px solid #d1d5db;padding:8px 10px;color:#1f2937;`
-	p.PreCode = `display:block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#111827;background:transparent;padding:0;margin:0;border-radius:0;white-space:pre;word-break:normal;word-wrap:normal;`
-	return p
-}
-
-// ---------- 学术：论文体 + 居中标题编号感 + 表注风格 ----------
-func academicPack(primary string) stylePack {
-	p := simplePack(primary)
-	p.Base = `margin:0 auto;padding:0 8px;max-width:680px;font-size:15.5px;color:#1f2937;line-height:1.8;letter-spacing:0.01em;word-wrap:break-word;font-family:"Times New Roman",Georgia,SimSun,"Songti SC",serif;text-align:justify;`
-	p.Tags["h1"] = `display:block;font-size:20px;font-weight:700;color:#111827;line-height:1.4;margin:1.6em 0 1.1em;text-align:center;letter-spacing:0.04em;`
-	p.Tags["h2"] = `display:block;font-size:16px;font-weight:700;color:#111827;line-height:1.4;margin:1.8em 0 0.8em;text-align:center;`
-	p.Tags["h3"] = `display:block;font-size:15px;font-weight:700;color:#1f2937;line-height:1.4;margin:1.4em 0 0.55em;text-align:left;`
-	p.Tags["p"] = `display:block;margin:0 0 1.1em;font-size:15.5px;color:#1f2937;line-height:1.8;letter-spacing:0.01em;text-align:{{align}};{{indent}}`
-	p.Tags["blockquote"] = `display:block;margin:1.2em 2.2em;padding:0;color:#4b5563;background:transparent;border:none;font-size:14px;line-height:1.85;font-style:italic;text-align:left;`
-	p.Tags["ul"] = `display:block;margin:0.4em 0 1em 0.5em;padding-left:1.4em;list-style-type:disc;color:#1f2937;`
-	p.Tags["ol"] = `display:block;margin:0.4em 0 1em 0.5em;padding-left:1.5em;list-style-type:decimal;color:#1f2937;`
-	p.Tags["li"] = `display:list-item;margin:0.25em 0;line-height:1.8;`
-	p.Tags["code"] = `font-family:Consolas,Monaco,Courier New,monospace;font-size:13px;color:#b91c1c;background:transparent;padding:0 2px;border-radius:0;border-bottom:1px dotted #fca5a5;`
-	p.Tags["pre"] = `display:block;margin:1em 0;padding:12px 14px;background:#f9fafb;border-radius:0;border:1px solid #d1d5db;overflow-x:auto;line-height:1.5;font-size:12.5px;white-space:pre;`
-	p.Tags["hr"] = `display:block;border:none;border-top:1px solid #9ca3af;margin:2em auto;width:30%;height:1px;`
-	p.Tags["a"] = `color:#1d4ed8;text-decoration:none;border-bottom:1px solid #93c5fd;`
-	p.Tags["table"] = `display:table;border-collapse:collapse;width:100%;margin:1.2em 0 0.4em;font-size:13px;`
-	p.Tags["th"] = `border:1px solid #6b7280;padding:7px 10px;background:#f3f4f6;font-weight:700;text-align:center;color:#111827;`
-	p.Tags["td"] = `border:1px solid #9ca3af;padding:7px 10px;color:#1f2937;text-align:center;`
-	p.Tags["img"] = `display:block;max-width:92%;height:auto;margin:1.2em auto 0.3em;border-radius:0;`
-	p.Tags["figcaption"] = `display:block;margin:0.3em 0 1em;font-size:12px;color:#6b7280;line-height:1.5;text-align:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;`
-	p.PreCode = `display:block;font-family:Consolas,Monaco,Courier New,monospace;font-size:12.5px;color:#111827;background:transparent;padding:0;margin:0;border-radius:0;white-space:pre;word-break:normal;word-wrap:normal;`
-	return p
-}
-
-// ---------- 中国风：竖排装饰感标题 + 双线分割 + 宣纸底 ----------
-func chinPack(primary string) stylePack {
-	p := simplePack(primary)
-	p.Base = `margin:0 auto;padding:14px 16px 24px;max-width:660px;font-size:16.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.08em;word-wrap:break-word;font-family:"Songti SC",SimSun,STSong,"Noto Serif SC",serif;text-align:justify;background:#fffdf8;border:1px solid #f3e8d5;border-radius:4px;`
-	p.Tags["h1"] = `display:block;font-size:24px;font-weight:700;color:#9a3412;line-height:1.4;margin:1.2em 0 0.9em;text-align:center;letter-spacing:0.28em;`
-	p.Tags["h2"] = `display:block;font-size:18px;font-weight:700;color:#c2410c;line-height:1.4;margin:1.7em 0 0.9em;text-align:center;letter-spacing:0.18em;padding:0.3em 0;border-top:1px solid #e7c9a0;border-bottom:1px solid #e7c9a0;`
-	p.Tags["h3"] = `display:block;font-size:16px;font-weight:700;color:#c2410c;line-height:1.4;margin:1.3em 0 0.55em;text-align:left;letter-spacing:0.12em;`
-	p.Tags["p"] = `display:block;margin:0 0 1.2em;font-size:16.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.08em;text-align:{{align}};{{indent}}`
-	p.Tags["strong"] = `font-weight:700;color:#9a3412;`
-	p.Tags["b"] = `font-weight:700;color:#9a3412;`
-	p.Tags["blockquote"] = `display:block;margin:1.3em 1.2em;padding:0.9em 0.4em;color:#78350f;background:transparent;border:none;border-top:1px solid #e7c9a0;border-bottom:1px solid #e7c9a0;font-size:15px;line-height:1.9;text-align:center;`
-	p.Tags["ul"] = `display:block;margin:0.5em 0 1em;padding-left:1.5em;list-style-type:square;color:#3f3f3f;`
-	p.Tags["ol"] = `display:block;margin:0.5em 0 1em;padding-left:1.5em;list-style-type:cjk-ideographic;color:#3f3f3f;`
-	p.Tags["li"] = `display:list-item;margin:0.4em 0;line-height:1.85;`
-	p.Tags["a"] = `color:#c2410c;text-decoration:none;border-bottom:1px solid rgba(194,65,12,0.35);`
-	p.Tags["code"] = `font-family:Consolas,Monaco,Courier New,monospace;font-size:13px;color:#c2410c;background:#fef3c7;padding:1px 5px;border-radius:2px;`
-	p.Tags["pre"] = `display:block;margin:1.1em 0;padding:14px 16px;background:#fff7ed;border-radius:2px;border:1px solid #e7c9a0;overflow-x:auto;line-height:1.55;font-size:13px;white-space:pre;`
-	p.Tags["hr"] = `display:block;border:none;margin:2em auto;height:0;width:36%;border-top:1px solid #c2410c;border-bottom:1px solid #c2410c;padding:2px 0;`
-	p.Tags["img"] = `display:block;max-width:100%;height:auto;margin:1.2em auto;border-radius:2px;border:1px solid #e7c9a0;padding:4px;background:#fff;`
-	p.Tags["table"] = `display:table;border-collapse:collapse;width:100%;margin:1.1em 0;font-size:13.5px;`
-	p.Tags["th"] = `border:1px solid #d6b48a;padding:8px 11px;background:#fff7ed;font-weight:700;text-align:center;color:#9a3412;`
-	p.Tags["td"] = `border:1px solid #e7c9a0;padding:8px 11px;color:#3f3f3f;text-align:center;`
-	p.Tags["figcaption"] = `display:block;margin-top:0.45em;font-size:12px;color:#a16207;line-height:1.5;text-align:center;letter-spacing:0.12em;`
-	p.PreCode = `display:block;font-family:Consolas,Monaco,Courier New,monospace;font-size:13px;color:#3f3f3f;background:transparent;padding:0;margin:0;border-radius:0;white-space:pre;word-break:normal;word-wrap:normal;`
-	return p
-}
-
-
 func htmlEscape(s string) string {
 	r := strings.NewReplacer(`&`, "&amp;", `<`, "&lt;", `>`, "&gt;", `"`, "&quot;")
 	return r.Replace(s)
 }
 
 func injectTOC(styled string, cfg Config) string {
-	// Extract h2/h3 text from already-styled HTML naively
 	headings := extractHeadings(styled)
 	if len(headings) == 0 {
 		styled = strings.ReplaceAll(styled, "<!--TOC-->", "")
@@ -351,7 +321,6 @@ func injectTOC(styled string, cfg Config) string {
 	if strings.Contains(styled, "<!--TOC-->") {
 		return strings.Replace(styled, "<!--TOC-->", toc, 1)
 	}
-	// insert after opening section
 	if idx := strings.Index(styled, ">"); idx > 0 {
 		return styled[:idx+1] + toc + styled[idx+1:]
 	}
@@ -430,7 +399,6 @@ func appendFooter(styled string, cfg Config) string {
 	if strings.Contains(styled, "<!--FOOTER-->") {
 		return strings.Replace(styled, "<!--FOOTER-->", footer, 1)
 	}
-	// before closing section
 	if strings.HasSuffix(styled, "</section>") {
 		return strings.TrimSuffix(styled, "</section>") + footer + "</section>"
 	}

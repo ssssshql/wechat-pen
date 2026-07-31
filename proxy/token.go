@@ -92,6 +92,7 @@ func (w *wechatToken) accessToken() (string, error) {
 		return "", fmt.Errorf("empty access_token")
 	}
 	w.cache.set(tok.AccessToken, tok.ExpiresIn)
+
 	return tok.AccessToken, nil
 }
 

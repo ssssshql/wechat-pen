@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -115,6 +116,14 @@ func processContentImages(htmlContent string, useUploadImg bool) (string, error)
 }
 
 func downloadImage(url string) ([]byte, error) {
+	// Support base64 data URLs (used by image-post notes stored locally).
+	if strings.HasPrefix(url, "data:") {
+		comma := strings.Index(url, ",")
+		if comma < 0 {
+			return nil, fmt.Errorf("invalid data url")
+		}
+		return base64.StdEncoding.DecodeString(url[comma+1:])
+	}
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err

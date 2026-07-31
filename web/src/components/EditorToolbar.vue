@@ -51,13 +51,7 @@ const highlightTheme = defineModel<HighlightTheme>('highlightTheme', { required:
 const textIndent = defineModel<boolean>('textIndent', { required: true })
 const justify = defineModel<boolean>('justify', { required: true })
 
-const emit = defineEmits<{
-  action: [type: string]
-  insert: [text: string]
-  styleChange: [v: unknown]
-  primaryColor: [v: string]
-  'toggle-ai': []
-}>()
+const emit = defineEmits(['action', 'insert', 'styleChange', 'primaryColor', 'toggleAi'])
 
 const styleOptions = ref<StyleOption[]>(
   STYLE_PRESETS.map((s) => ({
@@ -183,11 +177,12 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
 
       <!-- AI button -->
       <Tooltip>
-        <TooltipTrigger as-child @click="emit('toggle-ai')">
+        <TooltipTrigger as-child>
           <Button
             variant="ghost"
             size="icon-xs"
             class="text-muted-foreground hover:text-foreground"
+            @click="$emit('toggleAi')"
           >
             <Sparkles class="size-3.5" />
           </Button>
@@ -197,16 +192,11 @@ const formatActions: { id: string; label: string; icon: unknown }[] = [
 
       <!-- Snippets dropdown -->
       <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground">
-                <Puzzle class="size-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">插入组件</TooltipContent>
-        </Tooltip>
+        <DropdownMenuTrigger as-child>
+          <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground" title="插入组件">
+            <Puzzle class="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             v-for="s in SNIPPETS"

@@ -33,7 +33,7 @@ func TestConvertWeChatInlineStyles(t *testing.T) {
 	if !strings.Contains(html, "<section") {
 		t.Fatalf("expected outer section, got:\n%s", html)
 	}
-	if !strings.Contains(html, "font-size:22px") {
+	if !strings.Contains(html, "font-size:48px") {
 		t.Fatalf("expected h1 wechat style, got:\n%s", html)
 	}
 }

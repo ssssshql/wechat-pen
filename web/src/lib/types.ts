@@ -171,12 +171,6 @@ export const STYLE_PRESETS: {
   { value: 'tech', label: '科技', color: '#3b82f6', desc: '色条标题 · 暗底代码 · 胶囊标签' },
   { value: 'magazine', label: '杂志', color: '#c23a2b', desc: '全居中衬线 · 无边框引用 · 装饰分割' },
   { value: 'warm', label: '暖色', color: '#d97706', desc: '胶囊小标题 · 虚线分隔 · 软阴影图' },
-  { value: 'dark', label: '暗黑', color: '#58a6ff', desc: '整卡深色阅读 · 高亮描边' },
-  { value: 'fresh', label: '清新', color: '#059669', desc: '实心色条 h2 · 浅绿清单底板' },
-  { value: 'pink', label: '粉色', color: '#ec4899', desc: '气泡式引用 · 圆角列表卡片' },
-  { value: 'mono', label: '极简灰', color: '#6b7280', desc: '等宽正文 · 线稿感 · 灰度图片' },
-  { value: 'academic', label: '学术', color: '#1d4ed8', desc: '论文体 · 居中标题 · 表注风格' },
-  { value: 'chin', label: '中国风', color: '#c2410c', desc: '宣纸底 · 双线标题 · 中文序号' },
 ]
 
 export const HIGHLIGHT_THEMES: { value: HighlightTheme; label: string }[] = [

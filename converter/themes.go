@@ -175,7 +175,7 @@ func DeleteThemePack(dir, id string) error {
 
 func isBuiltinStyleID(id string) bool {
 	switch normalizeThemeID(id) {
-	case "simple", "magazine", "tech", "warm", "dark", "fresh", "pink", "mono", "academic", "chin":
+	case "simple", "magazine", "tech", "warm":
 		return true
 	default:
 		return false
@@ -198,7 +198,7 @@ func packFromExternal(cfg Config, pack ThemePackFile) stylePack {
 	baseCfg.Style = extends
 	// Avoid external id being treated as builtin
 	switch extends {
-	case StyleMagazine, StyleTech, StyleWarm, StyleDark, StyleFresh, StylePink, StyleMono, StyleAcademic, StyleChin, StyleSimple:
+	case StyleMagazine, StyleTech, StyleWarm, StyleSimple:
 	default:
 		baseCfg.Style = StyleSimple
 	}
@@ -252,18 +252,6 @@ func builtinPack(cfg Config) stylePack {
 		return techPack(primary)
 	case StyleWarm:
 		return warmPack(primary)
-	case StyleDark:
-		return darkPack(primary)
-	case StyleFresh:
-		return freshPack(primary)
-	case StylePink:
-		return pinkPack(primary)
-	case StyleMono:
-		return monoPack(primary)
-	case StyleAcademic:
-		return academicPack(primary)
-	case StyleChin:
-		return chinPack(primary)
 	default:
 		return simplePack(primary)
 	}
@@ -285,11 +273,5 @@ func ListBuiltinStyles() []BuiltinStyleMeta {
 		{ID: "tech", Name: "科技", Description: "色条标题 · 暗底代码 · 胶囊标签", Primary: "#3b82f6", Builtin: true},
 		{ID: "magazine", Name: "杂志", Description: "全居中衬线 · 无边框引用 · 装饰分割", Primary: "#c23a2b", Builtin: true},
 		{ID: "warm", Name: "暖色", Description: "胶囊小标题 · 虚线分隔 · 软阴影图", Primary: "#d97706", Builtin: true},
-		{ID: "dark", Name: "暗黑", Description: "整卡深色阅读 · 高亮描边", Primary: "#58a6ff", Builtin: true},
-		{ID: "fresh", Name: "清新", Description: "实心色条 h2 · 浅绿清单底板", Primary: "#059669", Builtin: true},
-		{ID: "pink", Name: "粉色", Description: "气泡式引用 · 圆角列表卡片", Primary: "#ec4899", Builtin: true},
-		{ID: "mono", Name: "极简灰", Description: "等宽正文 · 线稿感 · 灰度图片", Primary: "#6b7280", Builtin: true},
-		{ID: "academic", Name: "学术", Description: "论文体 · 居中标题 · 表注风格", Primary: "#1d4ed8", Builtin: true},
-		{ID: "chin", Name: "中国风", Description: "宣纸底 · 双线标题 · 中文序号", Primary: "#c2410c", Builtin: true},
 	}
 }

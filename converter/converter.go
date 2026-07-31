@@ -30,12 +30,6 @@ const (
 	StyleMagazine StylePack = "magazine"
 	StyleTech     StylePack = "tech"
 	StyleWarm     StylePack = "warm"
-	StyleDark     StylePack = "dark"
-	StyleFresh    StylePack = "fresh"
-	StylePink     StylePack = "pink"
-	StyleMono     StylePack = "mono"
-	StyleAcademic StylePack = "academic"
-	StyleChin     StylePack = "chin"
 	StyleCustom   StylePack = "custom"
 )
 
@@ -221,18 +215,6 @@ func defaultPrimary(s StylePack) string {
 		return "#3b82f6"
 	case StyleWarm:
 		return "#d97706"
-	case StyleDark:
-		return "#58a6ff"
-	case StyleFresh:
-		return "#059669"
-	case StylePink:
-		return "#ec4899"
-	case StyleMono:
-		return "#6b7280"
-	case StyleAcademic:
-		return "#1d4ed8"
-	case StyleChin:
-		return "#c2410c"
 	default:
 		return "#07c160"
 	}
@@ -275,27 +257,29 @@ func expandComponents(src string) string {
 			out = append(out, `<!--TOC-->`)
 		case "footer":
 			out = append(out, `<!--FOOTER-->`)
-								case "profile":
-				// Raw mp-common-profile: user provides real WeChat attributes.
-				// Known keys get auto-prefixed with "data-".
-				guide := `<p style="display:block;margin:1.2em 0 0.3em;font-size:13px;color:#888;text-align:center;text-indent:0;">👇 点击下方名片关注</p>`
-				tagAttrs := ` data-pluginname="mpprofile"`
-				dataKeys := map[string]bool{
-					"pluginname": true, "id": true, "headimg": true, "nickname": true,
-					"alias": true, "signature": true, "from": true, "is_biz_ban": true,
+		case "profile":
+			// Raw mp-common-profile: user provides real WeChat attributes.
+			// Known keys get auto-prefixed with "data-".
+			guide := `<p style="display:block;margin:1.2em 0 0.3em;font-size:13px;color:#888;text-align:center;text-indent:0;">👇 点击下方名片关注</p>`
+			tagAttrs := ` data-pluginname="mpprofile"`
+			dataKeys := map[string]bool{
+				"pluginname": true, "id": true, "headimg": true, "nickname": true,
+				"alias": true, "signature": true, "from": true, "is_biz_ban": true,
+			}
+			for k, v := range attrs {
+				if v == "" {
+					continue
 				}
-				for k, v := range attrs {
-					if v == "" { continue }
-					key := htmlEscape(k)
-					if dataKeys[k] && !strings.HasPrefix(key, "data-") && key != "data-pluginname" {
-						key = "data-" + key
-					}
-					tagAttrs += fmt.Sprintf(` %s="%s"`, key, htmlEscape(v))
+				key := htmlEscape(k)
+				if dataKeys[k] && !strings.HasPrefix(key, "data-") && key != "data-pluginname" {
+					key = "data-" + key
 				}
-				tag := `<mp-common-profile` + tagAttrs + ` contenteditable="false"></mp-common-profile>`
-				out = append(out, guide+tag)
+				tagAttrs += fmt.Sprintf(` %s="%s"`, key, htmlEscape(v))
+			}
+			tag := `<mp-common-profile` + tagAttrs + ` contenteditable="false"></mp-common-profile>`
+			out = append(out, guide+tag)
 
-			case "mp-link", "miniprogram":
+		case "mp-link", "miniprogram":
 			out = append(out, `<p style="display:block;text-align:center;margin:1.6em 0;color:#ccc;letter-spacing:0.4em;">· · ·</p>`)
 		case "follow", "cta":
 			text := attrs["text"]
@@ -443,6 +427,9 @@ func applyWeChatStyles(fragment string, cfg Config) (string, CleanReport, error)
 	// Track dropped attrs
 	attrDrops := map[string]struct{}{}
 
+	// Auto-increment counter for {{num}} in tag templates
+	tagNumCounter := 0
+
 	walk(root, func(n *html.Node) {
 		if n.Type != html.ElementNode {
 			return
@@ -462,6 +449,31 @@ func applyWeChatStyles(fragment string, cfg Config) (string, CleanReport, error)
 			applySpecial(n, pack, cfg)
 			return
 		}
+
+		// If the tag value contains {{content}}, treat it as an HTML template.
+		// {{content}} is replaced with the original tag's inner HTML.
+		// {{num}} is replaced with an auto-incrementing 01, 02, 03...
+		// {{primary}} is replaced with the configured primary color.
+		if strings.Contains(style, "{{content}}") {
+			tagNumCounter++
+			inner := nodeInnerHTML(n)
+			tpl := style
+			tpl = strings.ReplaceAll(tpl, "{{content}}", inner)
+			tpl = strings.ReplaceAll(tpl, "{{num}}", fmt.Sprintf("%02d", tagNumCounter))
+			tpl = strings.ReplaceAll(tpl, "{{primary}}", cfg.PrimaryColor)
+
+			parsed, err := html.Parse(strings.NewReader(tpl))
+			if err == nil {
+				if body := findNode(parsed, "body"); body != nil && body.FirstChild != nil {
+					replacement := body.FirstChild
+					body.RemoveChild(replacement)
+					n.Parent.InsertBefore(replacement, n)
+					n.Parent.RemoveChild(n)
+				}
+			}
+			return
+		}
+
 		// Dynamic paragraph style
 		if n.Data == "p" {
 			style = pack.Paragraph(cfg)
@@ -571,6 +583,28 @@ func attrVal(n *html.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// findNode returns the first descendant element with the given tag name.
+func findNode(root *html.Node, tag string) *html.Node {
+	if root.Type == html.ElementNode && root.Data == tag {
+		return root
+	}
+	for c := root.FirstChild; c != nil; c = c.NextSibling {
+		if r := findNode(c, tag); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+// nodeInnerHTML renders the inner HTML of a node (children only, no outer tag).
+func nodeInnerHTML(n *html.Node) string {
+	var buf bytes.Buffer
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		html.Render(&buf, c)
+	}
+	return buf.String()
 }
 
 func setStyleAbsolute(n *html.Node, style string) {
